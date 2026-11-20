@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,15 +30,43 @@ OUT = Path(__file__).resolve().parent.parent / "data" / "indicators.json"
 FINRA_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx"
 
 
-def get(url: str) -> bytes:
-    with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
-        return r.read()
+def get(url: str, tries: int = 4) -> bytes:
+    """帶重試的 GET：雲端機器連 FRED 等站偶爾逾時，退避後再試。"""
+    for k in range(tries):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=90) as r:
+                return r.read()
+        except Exception as e:
+            if k == tries - 1:
+                raise
+            print(f"  retry {k + 1}/{tries - 1} {url[:70]}… ({e})", flush=True)
+            time.sleep(5 * (k + 1))
+    raise RuntimeError("unreachable")
 
 
 def fred(series: str) -> pd.Series:
     df = pd.read_csv(io.BytesIO(get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}")),
                      index_col=0, parse_dates=True)
     return pd.to_numeric(df.iloc[:, 0], errors="coerce").dropna()
+
+
+def safe(name: str, fn, default=None):
+    """單一來源失敗時不讓整支腳本中斷；缺的欄位稍後由上次的資料補上。"""
+    try:
+        return fn()
+    except Exception as e:
+        print(f"::warning::{name} failed: {e}")
+        return default
+
+
+EMPTY = pd.Series(dtype=float)
+
+
+def previous_frame() -> pd.DataFrame | None:
+    if not OUT.exists():
+        return None
+    old = json.loads(OUT.read_text())
+    return pd.DataFrame(old["series"], index=pd.PeriodIndex(old["dates"], freq="M")), old
 
 
 def to_month(s: pd.Series) -> pd.Series:
@@ -145,21 +174,21 @@ def post_video_check() -> dict | None:
 def main() -> None:
     ndx_df = ndx_monthly()
     ndx = ndx_df["close"]
-    m = finra_margin()
+    m = safe("FINRA", finra_margin, pd.DataFrame(columns=["debit", "credit_cash", "credit_margin"], dtype=float))
     debit = m["debit"] / 1000  # 十億美元
     margin_mom = debit.pct_change() * 100
     margin_accel = margin_mom.diff()  # 二階導：月增率的變化（百分點）
     margin_cash = m["debit"] / m["credit_cash"]
 
-    equity = to_month(fred("NCBEILQ027S")) / 1000  # 百萬 → 十億
-    gdp = to_month(fred("GDP"))
+    equity = safe("FRED NCBEILQ027S", lambda: to_month(fred("NCBEILQ027S")) / 1000, EMPTY)  # 百萬 → 十億
+    gdp = safe("FRED GDP", lambda: to_month(fred("GDP")), EMPTY)
     buffett = (equity / gdp * 100).dropna()
 
     # 內部人賣/買比的替代：非金融企業股票淨發行（季資料、年化，十億美元）。
     # > 0 代表企業整體從「回購」轉為「賣股給市場」（IPO、增發、內部人套現）。
-    issuance = to_month(fred("NCBCEBQ027S")) / 1000
+    issuance = safe("FRED NCBCEBQ027S", lambda: to_month(fred("NCBCEBQ027S")) / 1000, EMPTY)
 
-    m2 = to_month(fred("M2SL"))
+    m2 = safe("FRED M2SL", lambda: to_month(fred("M2SL")), EMPTY)
     m2_yoy = m2.pct_change(12) * 100
     ndx_yoy = ndx.pct_change(12) * 100
     gap = (m2_yoy - ndx_yoy).dropna()
@@ -193,12 +222,25 @@ def main() -> None:
         "rsp_spy_dd": conc_dd,
     }).reindex(idx)
 
+    # 任何來源這次抓不到 → 用上次輸出的同欄位補上空缺，其他欄位照常更新
+    prev = previous_frame()
+    stale = []
+    if prev is not None:
+        old_df, old = prev
+        for c in frame.columns:
+            if c in old_df and frame[c].count() < old_df[c].count():
+                stale.append(c)
+                frame[c] = frame[c].combine_first(old_df[c].reindex(idx))
+    if stale:
+        print("::warning::reused previous data for:", ", ".join(stale))
+
     out = {
         "updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "dates": [str(p) for p in frame.index],
         "series": {c: [None if pd.isna(v) else round(float(v), 3) for v in frame[c]] for c in frame.columns},
-        "buffett_quarter_end": str(buffett.index.max()),
-        "issuance_quarter_end": str(issuance.index.max()),
+        "buffett_quarter_end": str(buffett.index.max()) if len(buffett) else (prev[1].get("buffett_quarter_end") if prev else None),
+        "issuance_quarter_end": str(issuance.index.max()) if len(issuance) else (prev[1].get("issuance_quarter_end") if prev else None),
+        "stale": stale,
         "post_video": post_video_check(),
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)

@@ -118,11 +118,11 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
 </details>
 
 <h2>2. 二階導儀表盤：歷史數據 × NDX</h2>
-<p class="sub">7 個指標中有 4 個有免費的長期歷史資料可回測（另 3 個只能用影片中的現值）。所有面板共用同一個時間軸：<b>拖拉最上方的時間框</b>（拉兩端縮放、拖中間平移），或<b>直接在圖上框選一段時間放大</b>；桌面版也可 Ctrl＋滾輪縮放。十字線在各面板同步。紅色虛線為觸發門檻，紅色底色為觸發期間。</p>
+<p class="sub">7 個指標中有 6 個能用免費的長期資料回測（本益比、集中度、內部人賣/買比用替代指標），只有 0DTE 佔比找不到合格的替代資料，僅列影片中的現值。所有面板共用同一個時間軸：<b>拖拉最上方的時間框</b>（拉兩端縮放、拖中間平移），或<b>直接在圖上框選一段時間放大</b>；桌面版也可 Ctrl＋滾輪縮放。十字線在各面板同步。紅色虛線為觸發門檻，紅色底色為觸發期間。</p>
 <div class="toolbar" id="ranges" role="group" aria-label="時間範圍"></div>
 <div class="readout" id="readout" aria-live="polite">拖拉上方時間框或在圖上框選來縮放</div>
 <div id="chart" class="panel" style="padding:6px 4px"></div>
-<p class="muted">資料來源：Yahoo Finance（^NDX 月收盤）、FINRA Margin Statistics、FRED（NCBEILQ027S、GDP、M2SL）、multpl.com（Shiller CAPE）。GitHub Actions 每週自動更新。</p>
+<p class="muted">資料來源：Yahoo Finance（^NDX 月收盤）、FINRA Margin Statistics、FRED（NCBEILQ027S、GDP、M2SL）、FRED NCBCEBQ027S（企業淨發行，內部人替代）、Yahoo Finance RSP/SPY（集中度替代）、multpl.com（Shiller CAPE）。GitHub Actions 每週自動更新。</p>
 
 <h3 style="margin-top:22px">7 指標現況</h3>
 <div class="tablewrap card" style="padding:4px 6px"><table id="dash"></table></div>
@@ -175,6 +175,7 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
 <div class="grid" style="gap:10px">
   <div class="note bad"><b>「2000 年保證金/現金比 4.5–5 倍」對不上。</b>用 FINRA 公開資料（借方餘額 ÷ 現金帳戶自由信用餘額）計算，2000 年 3 月只有 <span id="r2000">—</span> 倍；6.28 倍出現在 2026 年 1 月，而不是影片說的 2025 年 5 月（當時為 4.9 倍）。另外 FINRA 在 2010 年 2 月改了統計口徑（圖上可見明顯跳升），前後不能直接比較，因此影片「超過 2000 年峰值 30%」的說法無法用公開資料驗證；能確定的只有 2010 年後的口徑下，比值已創新高。</div>
   <div class="note"><b>1999 年「預測」是回溯驗證。</b>F ≈ 12% 與「11–14 週」窗口是事後用當時資料重算，九池權重未公開，無法排除過度擬合。</div>
+  <div class="note"><b>替代指標不等於原指標。</b>集中度用 RSP/SPY（等權重 ÷ 市值加權，比值下跌 = 大型股集中）；內部人賣/買比用 FRED 非金融企業股票淨發行（由負轉正 = 企業從回購轉為淨賣股，1999Q4–2000Q1、2021Q1 兩次大頂都出現）；遠期本益比用 Shiller CAPE。0DTE 試過 TQQQ/QQQ 成交比，但它反映的是產品普及而非投機速度，2026 年反而下滑，與影片論點背離，因此不採用。</div>
   <div class="note"><b>F、L、V 三個乘數都是主觀判斷。</b>L = 1.1、V = 1.05 並非由 6.28 倍或 64% 直接換算而來，影片沒有給出映射公式。</div>
 </div>
 
@@ -189,6 +190,8 @@ const RULES = {
   margin_mom: { label:'保證金借款月增率 < 0（連續 2 個月）', fn:(s,i)=> nn(s.margin_mom[i],s.margin_mom[i-1]) ? (s.margin_mom[i]<0 && s.margin_mom[i-1]<0) : null },
   buffett:    { label:'巴菲特指標 > 150%', threshold:150, dir:'>', fn:(s,i)=> nn(s.buffett[i]) ? s.buffett[i]>150 : null },
   m2_ndx_gap: { label:'M2 年增 − NDX 年增 < −20 個百分點', threshold:-20, dir:'<', fn:(s,i)=> nn(s.m2_ndx_gap[i]) ? s.m2_ndx_gap[i]<-20 : null },
+  rsp_spy:    { label:'RSP/SPY 距 3 年高點回落 > 15%（集中度快速上升）', fn:(s,i)=> nn(s.rsp_spy_dd[i]) ? s.rsp_spy_dd[i]<-15 : null },
+  issuance:   { label:'非金融企業股票淨發行 > 0（企業由回購轉為淨賣股）', threshold:0, dir:'>', fn:(s,i)=> nn(s.issuance[i]) ? s.issuance[i]>0 : null },
   cape:       { label:'Shiller CAPE > 40（遠期 P/E 的替代）', threshold:40, dir:'>', fn:(s,i)=> nn(s.cape[i]) ? s.cape[i]>40 : null },
 };
 function nn(...v){ return v.every(x=>x!==null && x!==undefined && !Number.isNaN(x)); }
@@ -229,12 +232,14 @@ function init(data){
 
 const PANELS = [
   {key:'ndx', title:'NDX 那斯達克 100（對數座標）', unit:'', d:0, tall:true, log:true, color:'--ndx'},
-  {key:'triggers', title:'可回測指標觸發數（0–4）', unit:' 項', d:0, color:'--critical', stepped:true, rule:'≥ 3 項視為高風險（7 項中缺 3 項無歷史）', threshold:3, dir:'>='},
+  {key:'triggers', title:'可回測指標觸發數（0–6）', unit:' 項', d:0, color:'--critical', stepped:true, rule:'≥ 3 項視為高風險（7 項中只缺 0DTE；集中度 2003 年起才有資料）', threshold:3, dir:'>='},
   {key:'margin_debt', title:'保證金借款（十億美元）', unit:'', d:0, color:'--s1', rule:'FINRA 借方餘額'},
   {key:'margin_mom', title:'保證金月增率（一階導）與其變化（二階導）', unit:'%', d:1, color:'--s1', extra:{key:'margin_accel',label:'二階導（百分點）',color:'--s2'}, threshold:0, dir:'<', ruleKey:'margin_mom'},
   {key:'margin_cash', title:'保證金借款 ÷ 現金（倍）', unit:'×', d:2, color:'--s1', rule:'借方餘額 ÷ 現金帳戶自由信用餘額；2010/2 FINRA 口徑變更造成斷層；虛線 4.5× 為影片宣稱的 2000 年峰值', threshold:4.5, dir:'>'},
   {key:'buffett', title:'巴菲特指標（%）', unit:'%', d:1, color:'--s1', ruleKey:'buffett'},
   {key:'m2_ndx_gap', title:'M2 年增率 − NDX 年增率（百分點）', unit:'', d:1, color:'--s1', ruleKey:'m2_ndx_gap'},
+  {key:'rsp_spy', title:'等權重 ÷ 市值加權 S&P 500（RSP/SPY，2003/5 = 100）', unit:'', d:1, color:'--s1', ruleKey:'rsp_spy'},
+  {key:'issuance', title:'非金融企業股票淨發行（十億美元，年化，季資料）', unit:'', d:0, color:'--s1', ruleKey:'issuance'},
   {key:'cape', title:'Shiller CAPE（本益比替代）', unit:'', d:1, color:'--s1', ruleKey:'cape'},
 ];
 
@@ -282,7 +287,7 @@ function buildPanels(){
       axisPointer:{label:{show:i===PANELS.length-1}}});
     const thr = p.ruleKey ? (RULES[p.ruleKey].threshold ?? p.threshold) : p.threshold;
     yAxes.push({type:p.log?'log':'value', gridIndex:i, scale:!p.log && p.key!=='triggers', splitNumber:3,
-      ...(p.key==='triggers'?{min:0,max:4,interval:1}:{}),
+      ...(p.key==='triggers'?{min:0,max:6,interval:1}:{}),
       axisLabel:{color:muted, formatter:v=> Math.abs(v)>=10000 ? (v/1000).toLocaleString()+'k' : (+v).toLocaleString('zh-TW',{maximumFractionDigits:2})},
       splitLine:{lineStyle:{color:grid}}, axisLine:{show:false}});
     const markLineData = EVENTS.map(([d,l])=>({xAxis:d, label:{show:p.key==='ndx', formatter:l, position:'insideEndTop', color:text2, fontSize:11}}));
@@ -336,9 +341,9 @@ function setHover(i){
   const r = document.getElementById('readout');
   if (i==null){ r.textContent = isTouch ? '點圖表查看數值；拖拉上方時間框的兩端可縮放' : '拖拉上方時間框或在圖上框選來縮放；Ctrl＋滾輪縮放、Shift＋拖拉平移'; return; }
   const s=D.series;
-  r.innerHTML = `<b>${D.dates[i]}</b><span>NDX <b>${fmt(s.ndx[i],0)}</b></span><span>觸發 <b>${triggers[i]??'—'}</b>/4</span>`+
+  r.innerHTML = `<b>${D.dates[i]}</b><span>NDX <b>${fmt(s.ndx[i],0)}</b></span><span>觸發 <b>${triggers[i]??'—'}</b>/6</span>`+
     `<span>保證金 <b>${fmt(s.margin_debt[i],0)}</b>B</span><span>月增 <b>${fmt(s.margin_mom[i])}</b>%</span><span>二階導 <b>${fmt(s.margin_accel[i])}</b></span>`+
-    `<span>保證金/現金 <b>${fmt(s.margin_cash[i],2)}</b>×</span><span>巴菲特 <b>${fmt(s.buffett[i])}</b>%</span><span>M2−NDX <b>${fmt(s.m2_ndx_gap[i])}</b></span><span>CAPE <b>${fmt(s.cape[i])}</b></span>`;
+    `<span>保證金/現金 <b>${fmt(s.margin_cash[i],2)}</b>×</span><span>巴菲特 <b>${fmt(s.buffett[i])}</b>%</span><span>M2−NDX <b>${fmt(s.m2_ndx_gap[i])}</b></span><span>淨發行 <b>${fmt(s.issuance[i],0)}</b>B</span><span>RSP/SPY <b>${fmt(s.rsp_spy[i])}</b></span><span>CAPE <b>${fmt(s.cape[i])}</b></span>`;
 }
 
 function lastOf(key){ const v=D.series[key]; for(let i=v.length-1;i>=0;i--) if(v[i]!=null) return [D.dates[i],v[i],i]; return [null,null,-1]; }
@@ -346,14 +351,14 @@ function lastOf(key){ const v=D.series[key]; for(let i=v.length-1;i>=0;i--) if(v
 function buildDash(){
   const s=D.series;
   const tag=(st)=> st===true?'<span class="tag on">已觸發</span>':st==='near'?'<span class="tag near">接近</span>':st===false?'<span class="tag off">未觸發</span>':'<span class="tag">無歷史資料</span>';
-  const [dm,vm,im]=lastOf('margin_mom'), [db,vb,ib]=lastOf('buffett'), [dg,vg,ig]=lastOf('m2_ndx_gap'), [dc,vc,ic]=lastOf('cape');
+  const [di,vi,ii]=lastOf('issuance'), [dr,vr,ir]=lastOf('rsp_spy'), [dm,vm,im]=lastOf('margin_mom'), [db,vb,ib]=lastOf('buffett'), [dg,vg,ig]=lastOf('m2_ndx_gap'), [dc,vc,ic]=lastOf('cape');
   const rows=[
     ['1','保證金借款月增率','−4.5%（連 2 月負）',`${fmt(vm)}%（${dm}，前月 ${fmt(s.margin_mom[im-1])}%）`,'連續 2 月 < 0',RULES.margin_mom.fn(s,im)],
-    ['2','0DTE 期權佔比','64%','—（CBOE 未提供免費歷史）','歷史新高',null],
-    ['3','標普前 10 大集中度','38%（1999 年 25%）','—','> 1999 水準',null],
+    ['2','0DTE 期權佔比','64%','—（無合格免費替代）','歷史新高',null],
+    ['3','標普前 10 大集中度','38%（1999 年 25%）',`替代：RSP/SPY ${fmt(vr)}，距 3 年高點 ${fmt(s.rsp_spy_dd[ir])}%（${dr}）`,'回落 > 15%',RULES.rsp_spy.fn(s,ir)],
     ['4','巴菲特指標','225.9%（1999 峰值 159%）',`${fmt(vb)}%（${D.buffett_quarter_end}）`,'> 150%',RULES.buffett.fn(s,ib)],
     ['5','M2 增速 − NDX 增速','−24.8',`${fmt(vg)}（${dg}）`,'< −20',RULES.m2_ndx_gap.fn(s,ig)],
-    ['6','內部人賣 / 買比','4.17×','—','> 5×',null],
+    ['6','內部人賣 / 買比','4.17×（門檻 5×）',`替代：企業淨發行 ${fmt(vi,0)}B（${D.issuance_quarter_end||di}）`,'淨發行 > 0',RULES.issuance.fn(s,ii)],
     ['7','遠期本益比','~30×（2000 年科技 50×）',`CAPE ${fmt(vc)}（${dc}）`,'CAPE > 40',RULES.cape.fn(s,ic)],
   ];
   document.getElementById('dash').innerHTML='<tr><th>#</th><th>指標</th><th>影片值（2026/5）</th><th>最新資料</th><th>門檻</th><th>狀態</th></tr>'+

@@ -4,10 +4,12 @@
   - NDX 月收盤         : Yahoo Finance (^NDX)
   - 保證金借款 / 現金   : FINRA Margin Statistics (debit balances, free credit in cash accounts)
   - 巴菲特指標          : FRED NCBEILQ027S (非金融企業股權市值) / GDP
+  - 企業淨發行股票     : FRED NCBCEBQ027S（內部人賣/買比的替代）
   - M2 年增率           : FRED M2SL
+  - 集中度替代         : Yahoo Finance RSP / SPY（含息調整）
   - Shiller CAPE        : multpl.com（作為「市盈率」指標的替代，影片用的是遠期 P/E，無免費歷史）
 
-0DTE 佔比、標普前十大集中度、內部人賣/買比沒有免費的長期歷史序列，只以影片中的現值顯示。
+0DTE 佔比沒有免費的長期歷史序列（試過 TQQQ/QQQ 成交比，與 0DTE 走勢背離，不採用），只以影片中的現值顯示。
 """
 from __future__ import annotations
 
@@ -72,6 +74,22 @@ def finra_margin() -> pd.DataFrame:
     return df.set_index("ym").sort_index().astype(float)
 
 
+def yahoo_adj_monthly(ticker: str) -> pd.Series:
+    j = json.loads(get(f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}"
+                       "?period1=946684800&period2=9999999999&interval=1mo"))["chart"]["result"][0]
+    s = pd.Series(j["indicators"]["adjclose"][0]["adjclose"], index=pd.to_datetime(j["timestamp"], unit="s"))
+    return to_month(s.dropna())
+
+
+def concentration_proxy() -> tuple[pd.Series, pd.Series]:
+    """等權重 ÷ 市值加權（RSP/SPY，含息）。比值下跌 = 大型股集中度上升。
+    回傳（以起始月 = 100 的指數, 距 36 個月高點的回落 %）。"""
+    r = (yahoo_adj_monthly("RSP") / yahoo_adj_monthly("SPY")).dropna()
+    r = r / r.iloc[0] * 100
+    dd = (r / r.rolling(36, min_periods=12).max() - 1) * 100
+    return r, dd
+
+
 def cape_monthly() -> pd.Series:
     html = get("https://www.multpl.com/shiller-pe/table/by-month").decode("utf-8", "ignore")
     rows = re.findall(r"<td>([A-Z][a-z]{2} \d{1,2}, \d{4})</td>\s*<td>.*?([\d.]+)\s*</td>", html, re.S)
@@ -117,6 +135,10 @@ def main() -> None:
     gdp = to_month(fred("GDP"))
     buffett = (equity / gdp * 100).dropna()
 
+    # 內部人賣/買比的替代：非金融企業股票淨發行（季資料、年化，十億美元）。
+    # > 0 代表企業整體從「回購」轉為「賣股給市場」（IPO、增發、內部人套現）。
+    issuance = to_month(fred("NCBCEBQ027S")) / 1000
+
     m2 = to_month(fred("M2SL"))
     m2_yoy = m2.pct_change(12) * 100
     ndx_yoy = ndx.pct_change(12) * 100
@@ -128,6 +150,12 @@ def main() -> None:
         print("CAPE fetch failed:", e)
         cape = pd.Series(dtype=float)
 
+    try:
+        conc, conc_dd = concentration_proxy()
+    except Exception as e:
+        print("RSP/SPY fetch failed:", e)
+        conc = conc_dd = pd.Series(dtype=float)
+
     idx = pd.period_range("1990-01", ndx.index.max(), freq="M")
     frame = pd.DataFrame({
         "ndx": ndx,
@@ -138,6 +166,9 @@ def main() -> None:
         "buffett": buffett.reindex(idx).ffill(limit=8),  # 季資料 → 往後填到下一季
         "m2_ndx_gap": gap,
         "cape": cape,
+        "issuance": issuance.reindex(idx).ffill(limit=8),
+        "rsp_spy": conc,
+        "rsp_spy_dd": conc_dd,
     }).reindex(idx)
 
     out = {
@@ -145,6 +176,7 @@ def main() -> None:
         "dates": [str(p) for p in frame.index],
         "series": {c: [None if pd.isna(v) else round(float(v), 3) for v in frame[c]] for c in frame.columns},
         "buffett_quarter_end": str(buffett.index.max()),
+        "issuance_quarter_end": str(issuance.index.max()),
         "post_video": post_video_check(),
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)

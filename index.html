@@ -118,10 +118,10 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
 </details>
 
 <h2>2. 二階導儀表盤：歷史數據 × NDX</h2>
-<p class="sub">7 個指標中有 4 個有免費的長期歷史資料可回測（另 3 個只能用影片中的現值）。每個面板與上方 NDX 共用時間軸，滑鼠移動時十字線同步。紅色虛線為觸發門檻，紅色底色為觸發期間。</p>
+<p class="sub">7 個指標中有 4 個有免費的長期歷史資料可回測（另 3 個只能用影片中的現值）。所有面板共用同一個時間軸：<b>拖拉最上方的時間框</b>（拉兩端縮放、拖中間平移），或<b>直接在圖上框選一段時間放大</b>；桌面版也可 Ctrl＋滾輪縮放。十字線在各面板同步。紅色虛線為觸發門檻，紅色底色為觸發期間。</p>
 <div class="toolbar" id="ranges" role="group" aria-label="時間範圍"></div>
-<div class="readout" id="readout" aria-live="polite">移動滑鼠或手指到圖上查看各指標數值</div>
-<div id="panels"></div>
+<div class="readout" id="readout" aria-live="polite">拖拉上方時間框或在圖上框選來縮放</div>
+<div id="chart" class="panel" style="padding:6px 4px"></div>
 <p class="muted">資料來源：Yahoo Finance（^NDX 月收盤）、FINRA Margin Statistics、FRED（NCBEILQ027S、GDP、M2SL）、multpl.com（Shiller CAPE）。GitHub Actions 每週自動更新。</p>
 
 <h3 style="margin-top:22px">7 指標現況</h3>
@@ -181,7 +181,7 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
 <footer>本頁為教育與研究用途的方法重建，不構成投資建議。逐字稿由 Qwen3-ASR 自動辨識後校正，可能有誤差。<br>原始碼與資料腳本：<a id="repo" href="#">GitHub</a></footer>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <script>
 // ───────── 觸發規則（可依自己的判斷調整門檻）─────────
 // 每個規則回傳 true / false / null（null = 該月沒有資料）
@@ -199,7 +199,7 @@ const RANGES = [['全部','1997-01',null],['1997–2003','1997-01','2003-12'],['
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const fmt = (v,d=1) => v==null ? '—' : v.toLocaleString('zh-TW',{maximumFractionDigits:d,minimumFractionDigits:d});
 
-let D, charts=[], hoverIdx=null, triggers=[];
+let D, triggers=[];
 
 fetch('data/indicators.json').then(r=>r.json()).then(init);
 
@@ -223,7 +223,8 @@ function init(data){
   const repo = location.hostname.endsWith('github.io')
     ? `https://github.com/${location.hostname.split('.')[0]}/${location.pathname.split('/')[1]}` : '#';
   document.getElementById('repo').href = repo;
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{charts.forEach(c=>c.destroy());charts=[];document.getElementById('panels').innerHTML='';buildPanels();});
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',buildPanels);
+  let rt; addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(()=>{ const sv=chart.getOption().dataZoom[0]; buildPanels(); chart.dispatchAction({type:'dataZoom',dataZoomIndex:0,startValue:sv.startValue,endValue:sv.endValue}); },200); });
 }
 
 const PANELS = [
@@ -240,100 +241,100 @@ const PANELS = [
 function seriesOf(key){ return key==='triggers' ? triggers : D.series[key]; }
 
 function triggeredMask(p){
-  const v = seriesOf(p.key);
+  if (p.key==='ndx') return triggers.map(t=>t!=null&&t>=3);
   if (p.ruleKey) return D.dates.map((_,i)=>RULES[p.ruleKey].fn(D.series,i)===true);
   if (p.threshold==null) return null;
+  const v = seriesOf(p.key);
   return v.map(x=> x==null?false : p.dir==='>'?x>p.threshold : p.dir==='>='?x>=p.threshold : x<p.threshold);
 }
+function maskAreas(mask){
+  const out=[]; if(!mask) return out; let st=null;
+  mask.forEach((on,i)=>{ if(on&&st==null) st=i; if((!on||i===mask.length-1)&&st!=null){ const en=on?i:i-1; out.push([{xAxis:D.dates[st]},{xAxis:D.dates[en]}]); st=null; } });
+  return out;
+}
 
-// plugin：觸發底色、事件線、門檻線、同步十字線
-const overlay = {
-  id:'overlay',
-  beforeDatasetsDraw(c){
-    const {ctx, chartArea:a, scales:{x,y}} = c, p = c.options.plugins.overlay;
-    ctx.save();
-    if (p.mask){
-      ctx.fillStyle = css('--critical-bg');
-      const w = (x.getPixelForValue(1)-x.getPixelForValue(0));
-      p.mask.forEach((on,i)=>{ if(!on) return; const px=x.getPixelForValue(i); if(px<a.left-w||px>a.right) return;
-        ctx.fillRect(Math.max(a.left,px-w/2), a.top, Math.min(w+0.5,a.right-px+w/2), a.bottom-a.top); });
-    }
-    ctx.setLineDash([3,3]); ctx.lineWidth=1; ctx.strokeStyle=css('--muted'); ctx.fillStyle=css('--muted'); ctx.font='11px sans-serif';
-    EVENTS.forEach(([d,l])=>{ const i=D.dates.indexOf(d); if(i<0) return; const px=x.getPixelForValue(i);
-      if(px<a.left||px>a.right) return; ctx.beginPath(); ctx.moveTo(px,a.top); ctx.lineTo(px,a.bottom); ctx.stroke();
-      if(p.labels){ const w=ctx.measureText(l).width, left=px+3+w>a.right; ctx.save(); ctx.textBaseline='top';
-        ctx.fillText(l, left? px-3-w : px+3, a.top+(left?18:4)); ctx.restore(); } });
-    if (p.threshold!=null){ const py=y.getPixelForValue(p.threshold); if(py>=a.top&&py<=a.bottom){
-      ctx.strokeStyle=css('--critical'); ctx.setLineDash([5,4]); ctx.beginPath(); ctx.moveTo(a.left,py); ctx.lineTo(a.right,py); ctx.stroke(); } }
-    ctx.restore();
-  },
-  afterDatasetsDraw(c){
-    if (hoverIdx==null) return;
-    const {ctx, chartArea:a, scales:{x}} = c, px = x.getPixelForValue(hoverIdx);
-    if(px<a.left||px>a.right) return;
-    ctx.save(); ctx.strokeStyle=css('--text2'); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(px,a.top); ctx.lineTo(px,a.bottom); ctx.stroke();
-    c.data.datasets.forEach((ds,k)=>{ const v=ds.data[hoverIdx]; if(v==null) return; const py=c.scales.y.getPixelForValue(v);
-      ctx.fillStyle=ds.borderColor; ctx.strokeStyle=css('--surface'); ctx.lineWidth=2; ctx.beginPath(); ctx.arc(px,py,4,0,7); ctx.fill(); ctx.stroke(); });
-    ctx.restore();
-  }
-};
+const isTouch = matchMedia('(pointer:coarse)').matches;
+let chart, spanMonths=999;
+const bucket = m => m>48 ? 0 : m>18 ? 1 : 2;
 
 function buildPanels(){
-  const root = document.getElementById('panels');
   const tb = document.getElementById('ranges'); tb.innerHTML='';
   RANGES.forEach(([lab,a,b],k)=>{ const bt=document.createElement('button'); bt.textContent=lab; bt.setAttribute('aria-pressed',k===0);
     bt.onclick=()=>{ tb.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===bt)); setRange(a,b); }; tb.appendChild(bt); });
+  const rs = document.createElement('button'); rs.textContent='重設縮放'; rs.onclick=()=>tb.querySelector('button').click(); tb.appendChild(rs);
 
-  PANELS.forEach(p=>{
-    const el = document.createElement('div'); el.className='panel';
+  const el = document.getElementById('chart');
+  const narrow = el.clientWidth < 600;
+  const SLIDER_H = 30, HEAD = 44, GAP = 26;
+  let top = SLIDER_H + 22;
+  const grids=[], titles=[], xAxes=[], yAxes=[], series=[];
+  const muted=css('--muted'), border=css('--border'), grid=css('--grid'), text=css('--text'), text2=css('--text2'), crit=css('--critical');
+
+  PANELS.forEach((p,i)=>{
+    const h = p.tall ? (narrow?190:250) : (narrow?110:130);
     const ruleTxt = p.ruleKey ? RULES[p.ruleKey].label : (p.rule||'');
-    const legend = p.extra ? `<span class="legend"><span><i style="background:${css(p.color)}"></i>月增率</span><span><i style="background:${css(p.extra.color)}"></i>${p.extra.label}</span></span>` : '';
-    el.innerHTML = `<header><h3>${p.title}</h3>${legend}</header><div class="rule">${ruleTxt}</div><div class="cv ${p.tall?'tall':''}"><canvas></canvas></div>`;
-    root.appendChild(el);
-    const datasets = [{data:seriesOf(p.key), borderColor:css(p.color), borderWidth:p.key==='ndx'?2:1.6, pointRadius:0, spanGaps:false, stepped:!!p.stepped, tension:0}];
-    if (p.extra) datasets.push({data:D.series[p.extra.key], borderColor:css(p.extra.color), borderWidth:1.2, pointRadius:0, tension:0});
-    const thr = p.ruleKey ? RULES[p.ruleKey].threshold ?? p.threshold : p.threshold;
-    const c = new Chart(el.querySelector('canvas'), {
-      type:'line',
-      data:{labels:D.dates, datasets},
-      plugins:[overlay],
-      options:{
-        responsive:true, maintainAspectRatio:false, animation:false, parsing:true, normalized:true,
-        events:['mousemove','mouseout','touchstart','touchmove'],
-        interaction:{mode:'index', intersect:false},
-        plugins:{legend:{display:false}, tooltip:{enabled:false},
-          overlay:{mask: p.key==='ndx'? triggers.map(t=>t!=null&&t>=3) : triggeredMask(p), threshold: thr, labels: p.key==='ndx'}},
-        scales:{
-          x:{ticks:{color:css('--muted'),maxRotation:0,autoSkip:true,maxTicksLimit:8,callback(v){return this.getLabelForValue(v).slice(0,4);}}, grid:{display:false}, border:{color:css('--border')}},
-          y:{type:p.log?'logarithmic':'linear', position:'left', ticks:{color:css('--muted'),maxTicksLimit:5,includeBounds:false,
-              callback:v=> p.log ? ([100,300,1000,3000,10000,30000].includes(v)? v.toLocaleString():'') : (+v).toLocaleString('zh-TW',{maximumFractionDigits:2})},
-             grid:{color:css('--grid')}, border:{display:false}, ...(p.key==='triggers'?{min:0,max:4}:{}) }
-        },
-        onHover:(e,_,chart)=>{ const i = chart.scales.x.getValueForPixel(e.x); setHover(i>=0&&i<D.dates.length?Math.round(i):null); }
-      }
-    });
-    c.canvas.addEventListener('mouseleave',()=>setHover(null));
-    charts.push(c);
+    titles.push({text:p.title, subtext:ruleTxt, left:4, top, textStyle:{fontSize:13,fontWeight:600,color:text}, subtextStyle:{fontSize:11,color:muted,width:el.clientWidth-20,overflow:'truncate'}, itemGap:2});
+    top += HEAD;
+    grids.push({left:narrow?44:58, right:12, top, height:h});
+    xAxes.push({type:'category', gridIndex:i, data:D.dates, boundaryGap:false,
+      axisLine:{lineStyle:{color:border}}, axisTick:{show:false},
+      axisLabel:{color:muted, hideOverlap:true, interval:(_,v)=> spanMonths>48 ? v.endsWith('-01') : spanMonths>18 ? /-(01|07)$/.test(v) : /-(01|04|07|10)$/.test(v), formatter:v=> spanMonths>48 ? v.slice(0,4) : v},
+      axisPointer:{label:{show:i===PANELS.length-1}}});
+    const thr = p.ruleKey ? (RULES[p.ruleKey].threshold ?? p.threshold) : p.threshold;
+    yAxes.push({type:p.log?'log':'value', gridIndex:i, scale:!p.log && p.key!=='triggers', splitNumber:3,
+      ...(p.key==='triggers'?{min:0,max:4,interval:1}:{}),
+      axisLabel:{color:muted, formatter:v=> Math.abs(v)>=10000 ? (v/1000).toLocaleString()+'k' : (+v).toLocaleString('zh-TW',{maximumFractionDigits:2})},
+      splitLine:{lineStyle:{color:grid}}, axisLine:{show:false}});
+    const markLineData = EVENTS.map(([d,l])=>({xAxis:d, label:{show:p.key==='ndx', formatter:l, position:'insideEndTop', color:text2, fontSize:11}}));
+    if (thr!=null) markLineData.push({yAxis:thr, lineStyle:{color:crit, type:[5,4]}, label:{show:false}});
+    series.push({name:p.title, type:'line', xAxisIndex:i, yAxisIndex:i, data:seriesOf(p.key), showSymbol:false, connectNulls:false,
+      step:p.stepped?'end':false, lineStyle:{width:p.key==='ndx'?2:1.6, color:css(p.color)}, itemStyle:{color:css(p.color)},
+      emphasis:{disabled:true}, sampling:'lttb',
+      markLine:{silent:true, symbol:'none', lineStyle:{color:muted, type:[3,3], width:1}, data:markLineData},
+      markArea:{silent:true, itemStyle:{color:css('--critical-bg')}, data:maskAreas(triggeredMask(p))}});
+    if (p.extra) series.push({name:p.extra.label, type:'line', xAxisIndex:i, yAxisIndex:i, data:D.series[p.extra.key], showSymbol:false,
+      lineStyle:{width:1.2, color:css(p.extra.color)}, itemStyle:{color:css(p.extra.color)}, emphasis:{disabled:true}});
+    top += h + GAP;
   });
+  el.style.height = top + 'px';
+
+  const all = PANELS.map((_,i)=>i);
+  const zooms = [{type:'slider', xAxisIndex:all, top:4, height:SLIDER_H, left:narrow?44:58, right:12, filterMode:'filter',
+      brushSelect:true, borderColor:border, fillerColor:'rgba(42,120,214,.15)', handleSize:'110%',
+      textStyle:{color:text2}, labelFormatter:(v,s)=>s, dataBackground:{lineStyle:{color:muted}, areaStyle:{color:grid}},
+      selectedDataBackground:{lineStyle:{color:css('--s1')}, areaStyle:{color:'rgba(42,120,214,.12)'}}}];
+  if (!isTouch) zooms.push({type:'inside', xAxisIndex:all, filterMode:'filter', zoomOnMouseWheel:'ctrl', moveOnMouseWheel:false, moveOnMouseMove:'shift'});
+
+  if (chart) chart.dispose();
+  chart = echarts.init(el, null, {renderer:'canvas'});
+  chart.setOption({
+    animation:false, title:titles, grid:grids, xAxis:xAxes, yAxis:yAxes, series, dataZoom:zooms,
+    axisPointer:{link:[{xAxisIndex:'all'}], lineStyle:{color:text2}, label:{backgroundColor:text2}},
+    tooltip:{trigger:'axis', showContent:false, axisPointer:{type:'line'}},
+    toolbox:{show:!isTouch, right:8, top:SLIDER_H+18, itemSize:14, iconStyle:{borderColor:text2},
+      feature:{dataZoom:{xAxisIndex:all, yAxisIndex:false, title:{zoom:'框選放大',back:'上一步'}}, restore:{show:false}}}
+  });
+  // 桌面預設開啟「框選放大」：在任一面板拖拉一個時間框即可放大
+  if (!isTouch) chart.dispatchAction({type:'takeGlobalCursor', key:'dataZoomSelect', dataZoomSelectActive:true});
+  chart.on('updateAxisPointer', e=>{ const a=e.axesInfo&&e.axesInfo[0]; setHover(a? a.value : null); });
+  chart.on('datazoom', ()=>{ const opt=chart.getOption().dataZoom[0]; const prevB=bucket(spanMonths); spanMonths=opt.endValue-opt.startValue; if(bucket(spanMonths)!==prevB) requestAnimationFrame(()=>chart.setOption({xAxis:PANELS.map(()=>({}))})); const tb=document.getElementById('ranges');
+    // 拖拉後若不等於任何預設區間，取消按鈕高亮
+    tb.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.sv===String(opt.startValue)&&b.dataset.ev===String(opt.endValue))); });
+  el.addEventListener('mouseleave',()=>setHover(null));
+  RANGES.forEach(([_,a,b],k)=>{ const bt=tb.children[k]; bt.dataset.sv=D.dates.indexOf(a); bt.dataset.ev=b?D.dates.indexOf(b):D.dates.length-1; });
   setRange('1997-01',null);
 }
 
 function setRange(a,b){
-  const lo = D.dates.indexOf(a), hi = b? D.dates.indexOf(b) : D.dates.length-1;
-  charts.forEach(c=>{ c.options.scales.x.min=lo; c.options.scales.x.max=hi;
-    // 依可見範圍重算 y 軸
-    const vals = c.data.datasets.flatMap(ds=>ds.data.slice(lo,hi+1)).filter(v=>v!=null);
-    if (c.options.scales.y.type!=='logarithmic' && c.options.scales.y.max!==4){
-      const thr=c.options.plugins.overlay.threshold, all = thr!=null? vals.concat([thr]) : vals;
-      const mn=Math.min(...all), mx=Math.max(...all), pad=(mx-mn)*0.06||1; c.options.scales.y.min=mn-pad; c.options.scales.y.max=mx+pad;
-    } else if (c.options.scales.y.type==='logarithmic'){ c.options.scales.y.min=Math.min(...vals)*0.9; c.options.scales.y.max=Math.max(...vals)*1.1; }
-    c.update('none'); });
+  const lo=D.dates.indexOf(a), hi=b?D.dates.indexOf(b):D.dates.length-1;
+  chart.dispatchAction({type:'dataZoom', dataZoomIndex:0, startValue:lo, endValue:hi});
 }
 
+let hoverIdx=null;
 function setHover(i){
-  if (i===hoverIdx) return; hoverIdx=i; charts.forEach(c=>c.draw());
+  if (i===hoverIdx) return; hoverIdx=i;
   const r = document.getElementById('readout');
-  if (i==null){ r.textContent='移動滑鼠或手指到圖上查看各指標數值'; return; }
+  if (i==null){ r.textContent = isTouch ? '點圖表查看數值；拖拉上方時間框的兩端可縮放' : '拖拉上方時間框或在圖上框選來縮放；Ctrl＋滾輪縮放、Shift＋拖拉平移'; return; }
   const s=D.series;
   r.innerHTML = `<b>${D.dates[i]}</b><span>NDX <b>${fmt(s.ndx[i],0)}</b></span><span>觸發 <b>${triggers[i]??'—'}</b>/4</span>`+
     `<span>保證金 <b>${fmt(s.margin_debt[i],0)}</b>B</span><span>月增 <b>${fmt(s.margin_mom[i])}</b>%</span><span>二階導 <b>${fmt(s.margin_accel[i])}</b></span>`+

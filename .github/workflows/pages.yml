@@ -1,0 +1,43 @@
+name: Update data & deploy Pages
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["data/**"]   # 機器人自己 commit 資料時不重跑
+  schedule:
+    - cron: "0 10 * * 2-6"   # 週二～週六 10:00 UTC（台北 18:00），抓前一個美股交易日
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Append new OCC 0DTE days (cache grows beyond OCC's 2-year window)
+        run: python scripts/occ_0dte.py 4 || echo "::warning::OCC fetch failed, keeping cache"
+      - name: Refresh indicators (keeps committed data if a source fails)
+        run: python scripts/build_data.py || echo "::warning::data refresh failed, using committed data"
+      - name: Commit refreshed data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet || git commit -m "data: weekly refresh" && git push
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -7,9 +7,10 @@
   - 企業淨發行股票     : FRED NCBCEBQ027S（內部人賣/買比的替代）
   - M2 年增率           : FRED M2SL
   - 集中度替代         : Yahoo Finance RSP / SPY（含息調整）
+  - SPX 0DTE 佔比      : OCC 日報彙總（scripts/occ_0dte.py，OCC 只開放近 2 年，之後逐次累積）
   - Shiller CAPE        : multpl.com（作為「市盈率」指標的替代，影片用的是遠期 P/E，無免費歷史）
 
-0DTE 佔比沒有免費的長期歷史序列（試過 TQQQ/QQQ 成交比，與 0DTE 走勢背離，不採用），只以影片中的現值顯示。
+，只以影片中的現值顯示。
 """
 from __future__ import annotations
 
@@ -90,6 +91,17 @@ def concentration_proxy() -> tuple[pd.Series, pd.Series]:
     return r, dd
 
 
+def zero_dte_monthly() -> pd.Series:
+    """讀取 occ_0dte.py 累積的每日快取，彙總成月度 SPX 0DTE 成交佔比（%）。"""
+    f = OUT.parent / "occ_0dte_daily.csv"
+    if not f.exists():
+        return pd.Series(dtype=float)
+    df = pd.read_csv(f, parse_dates=["date"]).query("total > 1_000_000")  # 排除休市/提前收盤等異常日
+    g = df.groupby(df["date"].dt.to_period("M"))[["total", "zero_dte"]].sum()
+    g = g[df.groupby(df["date"].dt.to_period("M")).size() >= 5]  # 月初只有零星幾天時先不畫
+    return g["zero_dte"] / g["total"] * 100
+
+
 def cape_monthly() -> pd.Series:
     html = get("https://www.multpl.com/shiller-pe/table/by-month").decode("utf-8", "ignore")
     rows = re.findall(r"<td>([A-Z][a-z]{2} \d{1,2}, \d{4})</td>\s*<td>.*?([\d.]+)\s*</td>", html, re.S)
@@ -167,6 +179,7 @@ def main() -> None:
         "m2_ndx_gap": gap,
         "cape": cape,
         "issuance": issuance.reindex(idx).ffill(limit=8),
+        "zero_dte": zero_dte_monthly(),
         "rsp_spy": conc,
         "rsp_spy_dd": conc_dd,
     }).reindex(idx)

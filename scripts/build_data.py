@@ -1,16 +1,17 @@
-"""抓取「龐氏漏斗模型」可回測指標的歷史資料，輸出 data/indicators.json。
+"""抓取「龐氏漏斗模型」各指標的歷史資料，輸出 data/indicators.json。
 
-資料來源（皆為免費公開）：
-  - NDX 月收盤         : Yahoo Finance (^NDX)
-  - 保證金借款 / 現金   : FINRA Margin Statistics (debit balances, free credit in cash accounts)
-  - 巴菲特指標          : FRED NCBEILQ027S (非金融企業股權市值) / GDP
-  - 企業淨發行股票     : FRED NCBCEBQ027S（內部人賣/買比的替代）
-  - M2 年增率           : FRED M2SL
-  - 集中度替代         : Yahoo Finance RSP / SPY（含息調整）
-  - SPX 0DTE 佔比      : OCC 日報彙總（scripts/occ_0dte.py，OCC 只開放近 2 年，之後逐次累積）
-  - Shiller CAPE        : multpl.com（作為「市盈率」指標的替代，影片用的是遠期 P/E，無免費歷史）
+原則：每一筆數字都必須是這次執行時從線上抓到的。每個序列有多個線上來源依序嘗試，
+全部失敗就讓整支腳本失敗（workflow 也會失敗、不部署），絕不沿用上次的舊值。
 
-，只以影片中的現值顯示。
+資料來源（皆為免費公開；→ 後為備援）：
+  - NDX 月收盤 / 月最低 : Yahoo chart API → yfinance → Stooq
+  - 保證金借款 / 現金   : FINRA Margin Statistics
+  - 巴菲特指標          : 非金融企業股權市值 ÷ GDP（DBnomics 聯準會 Z.1 / BEA → FRED）
+  - 企業淨發行股票      : 內部人賣/買比的替代（DBnomics Z.1 → FRED）
+  - M2 年增率           : DBnomics 聯準會 H.6 → FRED M2SL
+  - 集中度替代          : Yahoo RSP / SPY（含息調整）
+  - SPX 0DTE 佔比       : OCC 日報彙總（scripts/occ_0dte.py；OCC 只開放近 2 年，之後逐日累積）
+  - Shiller CAPE        : multpl.com（遠期 P/E 的替代）
 """
 from __future__ import annotations
 
@@ -28,45 +29,39 @@ import yfinance as yf
 UA = {"User-Agent": "Mozilla/5.0 (data-builder)"}
 OUT = Path(__file__).resolve().parent.parent / "data" / "indicators.json"
 FINRA_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx"
+VIDEO_DATE = "2026-05-08"  # 影片中的基準日
+USED: dict[str, str] = {}  # 每個序列實際用到的來源，寫進 JSON 供頁面顯示
 
 
-def get(url: str, tries: int = 4) -> bytes:
-    """帶重試的 GET：雲端機器連 FRED 等站偶爾逾時，退避後再試。"""
+# ───────── 共用工具 ─────────
+def get(url: str, tries: int = 3, timeout: int = 40) -> bytes:
     for k in range(tries):
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=90) as r:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=timeout) as r:
                 return r.read()
         except Exception as e:
             if k == tries - 1:
                 raise
             print(f"  retry {k + 1}/{tries - 1} {url[:70]}… ({e})", flush=True)
-            time.sleep(5 * (k + 1))
+            time.sleep(4 * (k + 1))
     raise RuntimeError("unreachable")
 
 
-def fred(series: str) -> pd.Series:
-    df = pd.read_csv(io.BytesIO(get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}")),
-                     index_col=0, parse_dates=True)
-    return pd.to_numeric(df.iloc[:, 0], errors="coerce").dropna()
-
-
-def safe(name: str, fn, default=None):
-    """單一來源失敗時不讓整支腳本中斷；缺的欄位稍後由上次的資料補上。"""
-    try:
-        return fn()
-    except Exception as e:
-        print(f"::warning::{name} failed: {e}")
-        return default
-
-
-EMPTY = pd.Series(dtype=float)
-
-
-def previous_frame() -> pd.DataFrame | None:
-    if not OUT.exists():
-        return None
-    old = json.loads(OUT.read_text())
-    return pd.DataFrame(old["series"], index=pd.PeriodIndex(old["dates"], freq="M")), old
+def first_ok(name: str, *sources):
+    """依序嘗試多個線上來源，回傳第一個成功的結果；全部失敗就丟出錯誤。"""
+    errors = []
+    for label, fn in sources:
+        try:
+            out = fn()
+            if out is None or (hasattr(out, "__len__") and len(out) == 0):
+                raise ValueError("empty result")
+            USED[name] = label
+            print(f"  ✓ {name}: {label}", flush=True)
+            return out
+        except Exception as e:
+            errors.append(f"{label}: {e}")
+            print(f"::warning::{name} via {label} failed: {e}", flush=True)
+    raise RuntimeError(f"{name}: all sources failed → " + " | ".join(errors))
 
 
 def to_month(s: pd.Series) -> pd.Series:
@@ -75,33 +70,68 @@ def to_month(s: pd.Series) -> pd.Series:
     return s[~s.index.duplicated(keep="last")]
 
 
-def ndx_monthly() -> pd.DataFrame:
-    """依序嘗試：Yahoo chart API → yfinance → Stooq。回傳月收盤 close 與月最低 low。"""
-    try:
-        j = json.loads(get("https://query2.finance.yahoo.com/v8/finance/chart/%5ENDX"
-                           "?period1=473385600&period2=9999999999&interval=1mo"))["chart"]["result"][0]
-        q = j["indicators"]["quote"][0]
-        df = pd.DataFrame({"close": q["close"], "low": q["low"]},
-                          index=pd.to_datetime(j["timestamp"], unit="s")).dropna()
-        if len(df) > 100:
-            return monthly_df(df)
-    except Exception as e:
-        print("Yahoo chart API failed:", e)
-    try:
-        d = yf.download("^NDX", start="1985-01-01", interval="1mo", progress=False, auto_adjust=False)
-        df = pd.DataFrame({"close": d["Close"].squeeze(), "low": d["Low"].squeeze()}).dropna()
-        if len(df) > 100:
-            return monthly_df(df)
-    except Exception as e:
-        print("yfinance failed:", e)
-    d = pd.read_csv(io.BytesIO(get("https://stooq.com/q/d/l/?s=%5Endx&i=m")), index_col=0, parse_dates=True)
-    return monthly_df(d.rename(columns={"Close": "close", "Low": "low"})[["close", "low"]].dropna())
-
-
 def monthly_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.index = pd.to_datetime(df.index).to_period("M")
     return df[~df.index.duplicated(keep="last")]
+
+
+# ───────── 總經序列：DBnomics → FRED ─────────
+def fred_csv(series: str) -> pd.Series:
+    raw = get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}", tries=2, timeout=30)
+    df = pd.read_csv(io.BytesIO(raw), index_col=0, parse_dates=True)
+    return to_month(pd.to_numeric(df.iloc[:, 0], errors="coerce").dropna())
+
+
+def dbnomics(series_id: str) -> pd.Series:
+    """DBnomics 鏡像（聯準會 Z.1 / H.6、BEA）。季資料一律以季初月份標記，與 FRED 對齊。"""
+    j = json.loads(get(f"https://api.db.nomics.world/v22/series/{series_id}?observations=1&format=json"))
+    doc = j["series"]["docs"][0]
+    idx = []
+    for p in doc["period"]:
+        if "-Q" in p:  # BEA 格式：2026-Q3
+            y, q = p.split("-Q")
+            idx.append(pd.Period(f"{y}-{(int(q) - 1) * 3 + 1:02d}", "M"))
+        else:
+            per = pd.Period(p[:7], "M")
+            idx.append(per - 2 if series_id.endswith(".Q") else per)  # Z.1 以季末日標記 → 季初月
+    v = pd.to_numeric(pd.Series(doc["value"], index=idx), errors="coerce").dropna()
+    return v[~v.index.duplicated(keep="last")]
+
+
+# 名稱: (FRED 代碼, DBnomics 代碼, DBnomics → FRED 單位換算)
+MACRO = {
+    "equity":   ("NCBEILQ027S", "FED/Z1/LM103164105.Q", 1),         # 百萬美元
+    "issuance": ("NCBCEBQ027S", "FED/Z1/FA103164105.Q", 1),         # 百萬美元，年化
+    "gdp":      ("GDP",         "BEA/NIPA-T10105/A191RC-Q", 1e-3),  # 十億美元
+    "m2":       ("M2SL",        "FED/H6_H6_M2/M2.M", 1),            # 十億美元
+}
+
+
+def macro(key: str) -> pd.Series:
+    fid, did, k = MACRO[key]
+    # DBnomics 優先：FRED 對雲端機器（GitHub Actions）常逾時；兩者數值逐月一致
+    return first_ok(key, (f"DBnomics {did}", lambda: dbnomics(did) * k),
+                         (f"FRED {fid}", lambda: fred_csv(fid)))
+
+
+# ───────── 市場資料 ─────────
+def ndx_yahoo() -> pd.DataFrame:
+    j = json.loads(get("https://query2.finance.yahoo.com/v8/finance/chart/%5ENDX"
+                       "?period1=473385600&period2=9999999999&interval=1mo"))["chart"]["result"][0]
+    q = j["indicators"]["quote"][0]
+    return monthly_df(pd.DataFrame({"close": q["close"], "low": q["low"]},
+                                   index=pd.to_datetime(j["timestamp"], unit="s")).dropna())
+
+
+def ndx_yfinance() -> pd.DataFrame:
+    d = yf.download("^NDX", start="1985-01-01", interval="1mo", progress=False, auto_adjust=False)
+    return monthly_df(pd.DataFrame({"close": d["Close"].squeeze(), "low": d["Low"].squeeze()}).dropna())
+
+
+def ndx_stooq() -> pd.DataFrame:
+    d = pd.read_csv(io.BytesIO(get("https://stooq.com/q/d/l/?s=%5Endx&i=m")), index_col=0, parse_dates=True)
+    return monthly_df(d.rename(columns={"Close": "close", "Low": "low"})[["close", "low"]].dropna())
 
 
 def finra_margin() -> pd.DataFrame:
@@ -118,21 +148,23 @@ def yahoo_adj_monthly(ticker: str) -> pd.Series:
     return to_month(s.dropna())
 
 
-def concentration_proxy() -> tuple[pd.Series, pd.Series]:
+def yfinance_adj_monthly(ticker: str) -> pd.Series:
+    d = yf.download(ticker, start="2003-01-01", interval="1mo", progress=False, auto_adjust=True)
+    return to_month(d["Close"].squeeze().dropna())
+
+
+def concentration_proxy(fetch) -> tuple[pd.Series, pd.Series]:
     """等權重 ÷ 市值加權（RSP/SPY，含息）。比值下跌 = 大型股集中度上升。
     回傳（以起始月 = 100 的指數, 距 36 個月高點的回落 %）。"""
-    r = (yahoo_adj_monthly("RSP") / yahoo_adj_monthly("SPY")).dropna()
+    r = (fetch("RSP") / fetch("SPY")).dropna()
     r = r / r.iloc[0] * 100
     dd = (r / r.rolling(36, min_periods=12).max() - 1) * 100
     return r, dd
 
 
 def zero_dte_monthly() -> pd.Series:
-    """讀取 occ_0dte.py 累積的每日快取，彙總成月度 SPX 0DTE 成交佔比（%）。"""
-    f = OUT.parent / "occ_0dte_daily.csv"
-    if not f.exists():
-        return pd.Series(dtype=float)
-    df = pd.read_csv(f, parse_dates=["date"]).query("total > 1_000_000")  # 排除休市/提前收盤等異常日
+    """讀取 occ_0dte.py 這次執行時從 OCC 抓取並累積的每日資料，彙總成月度 SPX 0DTE 佔比（%）。"""
+    df = pd.read_csv(OUT.parent / "occ_0dte_daily.csv", parse_dates=["date"]).query("total > 1_000_000")
     g = df.groupby(df["date"].dt.to_period("M"))[["total", "zero_dte"]].sum()
     g = g[df.groupby(df["date"].dt.to_period("M")).size() >= 5]  # 月初只有零星幾天時先不畫
     return g["zero_dte"] / g["total"] * 100
@@ -141,69 +173,50 @@ def zero_dte_monthly() -> pd.Series:
 def cape_monthly() -> pd.Series:
     html = get("https://www.multpl.com/shiller-pe/table/by-month").decode("utf-8", "ignore")
     rows = re.findall(r"<td>([A-Z][a-z]{2} \d{1,2}, \d{4})</td>\s*<td>.*?([\d.]+)\s*</td>", html, re.S)
-    s = pd.Series({pd.to_datetime(d): float(v) for d, v in rows}).sort_index()
-    return to_month(s)
+    return to_month(pd.Series({pd.to_datetime(d): float(v) for d, v in rows}).sort_index())
 
 
-VIDEO_DATE = "2026-05-08"  # 影片中的基準日（NDX 收 29,333 附近）
-
-
-def post_video_check() -> dict | None:
+def post_video_check() -> dict:
     """影片基準日之後 NDX 的實際日線高點，用來對照模型預測。"""
-    try:
-        j = json.loads(get("https://query2.finance.yahoo.com/v8/finance/chart/%5ENDX"
-                           "?range=2y&interval=1d"))["chart"]["result"][0]
-        q = j["indicators"]["quote"][0]
-        df = pd.DataFrame({"high": q["high"], "close": q["close"]},
-                          index=pd.to_datetime(j["timestamp"], unit="s").normalize()).dropna()
-        after = df.loc[VIDEO_DATE:]
-        peak_day = after["high"].idxmax()
-        return {
-            "base_date": VIDEO_DATE,
-            "base_close": round(float(df.loc[:VIDEO_DATE, "close"].iloc[-1]), 1),
-            "peak_date": peak_day.strftime("%Y-%m-%d"),
-            "peak_high": round(float(after.loc[peak_day, "high"]), 1),
-            "last_date": after.index[-1].strftime("%Y-%m-%d"),
-            "last_close": round(float(after["close"].iloc[-1]), 1),
-        }
-    except Exception as e:
-        print("post-video check failed:", e)
-        return None
+    j = json.loads(get("https://query2.finance.yahoo.com/v8/finance/chart/%5ENDX"
+                       "?range=2y&interval=1d"))["chart"]["result"][0]
+    q = j["indicators"]["quote"][0]
+    df = pd.DataFrame({"high": q["high"], "close": q["close"]},
+                      index=pd.to_datetime(j["timestamp"], unit="s").normalize()).dropna()
+    after = df.loc[VIDEO_DATE:]
+    peak_day = after["high"].idxmax()
+    return {
+        "base_date": VIDEO_DATE,
+        "base_close": round(float(df.loc[:VIDEO_DATE, "close"].iloc[-1]), 1),
+        "peak_date": peak_day.strftime("%Y-%m-%d"),
+        "peak_high": round(float(after.loc[peak_day, "high"]), 1),
+        "last_date": after.index[-1].strftime("%Y-%m-%d"),
+        "last_close": round(float(after["close"].iloc[-1]), 1),
+    }
 
 
+# ───────── 主程式 ─────────
 def main() -> None:
-    ndx_df = ndx_monthly()
+    ndx_df = first_ok("NDX", ("Yahoo chart API", ndx_yahoo), ("yfinance", ndx_yfinance), ("Stooq", ndx_stooq))
     ndx = ndx_df["close"]
-    m = safe("FINRA", finra_margin, pd.DataFrame(columns=["debit", "credit_cash", "credit_margin"], dtype=float))
+
+    m = first_ok("FINRA margin", ("FINRA xlsx", finra_margin))
     debit = m["debit"] / 1000  # 十億美元
     margin_mom = debit.pct_change() * 100
     margin_accel = margin_mom.diff()  # 二階導：月增率的變化（百分點）
     margin_cash = m["debit"] / m["credit_cash"]
 
-    equity = safe("FRED NCBEILQ027S", lambda: to_month(fred("NCBEILQ027S")) / 1000, EMPTY)  # 百萬 → 十億
-    gdp = safe("FRED GDP", lambda: to_month(fred("GDP")), EMPTY)
-    buffett = (equity / gdp * 100).dropna()
+    equity = macro("equity") / 1000  # 百萬 → 十億
+    buffett = (equity / macro("gdp") * 100).dropna()
+    # 內部人賣/買比的替代：> 0 代表企業整體從「回購」轉為「賣股給市場」（IPO、增發、內部人套現）
+    issuance = macro("issuance") / 1000
+    gap = (macro("m2").pct_change(12) * 100 - ndx.pct_change(12) * 100).dropna()
 
-    # 內部人賣/買比的替代：非金融企業股票淨發行（季資料、年化，十億美元）。
-    # > 0 代表企業整體從「回購」轉為「賣股給市場」（IPO、增發、內部人套現）。
-    issuance = safe("FRED NCBCEBQ027S", lambda: to_month(fred("NCBCEBQ027S")) / 1000, EMPTY)
-
-    m2 = safe("FRED M2SL", lambda: to_month(fred("M2SL")), EMPTY)
-    m2_yoy = m2.pct_change(12) * 100
-    ndx_yoy = ndx.pct_change(12) * 100
-    gap = (m2_yoy - ndx_yoy).dropna()
-
-    try:
-        cape = cape_monthly()
-    except Exception as e:  # multpl 偶爾擋爬蟲；失敗就略過，不影響其他指標
-        print("CAPE fetch failed:", e)
-        cape = pd.Series(dtype=float)
-
-    try:
-        conc, conc_dd = concentration_proxy()
-    except Exception as e:
-        print("RSP/SPY fetch failed:", e)
-        conc = conc_dd = pd.Series(dtype=float)
+    cape = first_ok("Shiller CAPE", ("multpl.com", cape_monthly))
+    conc, conc_dd = first_ok("RSP/SPY", ("Yahoo chart API", lambda: concentration_proxy(yahoo_adj_monthly)),
+                                        ("yfinance", lambda: concentration_proxy(yfinance_adj_monthly)))
+    zero_dte = first_ok("SPX 0DTE", ("OCC daily volume", zero_dte_monthly))
+    post_video = first_ok("post-video NDX", ("Yahoo chart API", post_video_check))
 
     idx = pd.period_range("1990-01", ndx.index.max(), freq="M")
     frame = pd.DataFrame({
@@ -213,40 +226,27 @@ def main() -> None:
         "margin_mom": margin_mom,
         "margin_accel": margin_accel,
         "margin_cash": margin_cash,
-        "buffett": buffett.reindex(idx).ffill(limit=8),  # 季資料 → 往後填到下一季
+        "buffett": buffett.reindex(idx).ffill(limit=8),  # 季資料 → 往後延伸到下一季公布前
         "m2_ndx_gap": gap,
         "cape": cape,
         "issuance": issuance.reindex(idx).ffill(limit=8),
-        "zero_dte": zero_dte_monthly(),
+        "zero_dte": zero_dte,
         "rsp_spy": conc,
         "rsp_spy_dd": conc_dd,
     }).reindex(idx)
 
-    # 任何來源這次抓不到 → 用上次輸出的同欄位補上空缺，其他欄位照常更新
-    prev = previous_frame()
-    stale = []
-    if prev is not None:
-        old_df, old = prev
-        for c in frame.columns:
-            if c in old_df and frame[c].count() < old_df[c].count():
-                stale.append(c)
-                frame[c] = frame[c].combine_first(old_df[c].reindex(idx))
-    if stale:
-        print("::warning::reused previous data for:", ", ".join(stale))
-
     out = {
-        "updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "updated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "dates": [str(p) for p in frame.index],
         "series": {c: [None if pd.isna(v) else round(float(v), 3) for v in frame[c]] for c in frame.columns},
-        "buffett_quarter_end": str(buffett.index.max()) if len(buffett) else (prev[1].get("buffett_quarter_end") if prev else None),
-        "issuance_quarter_end": str(issuance.index.max()) if len(issuance) else (prev[1].get("issuance_quarter_end") if prev else None),
-        "stale": stale,
-        "post_video": post_video_check(),
+        "buffett_quarter_end": str(buffett.index.max()),
+        "issuance_quarter_end": str(issuance.index.max()),
+        "post_video": post_video,
+        "sources": USED,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
-    last = frame.dropna(how="all").tail(1).T
-    print(f"wrote {OUT} ({len(frame)} months)\n{last}")
+    print(f"wrote {OUT} ({len(frame)} months)\n{frame.dropna(how='all').tail(1).T}")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -25,16 +26,17 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Append new OCC 0DTE days (cache grows beyond OCC's 2-year window)
-        run: python scripts/occ_0dte.py 4 || echo "::warning::OCC fetch failed, keeping cache"
-      - name: Refresh indicators (keeps committed data if a source fails)
-        run: python scripts/build_data.py || echo "::warning::data refresh failed, using committed data"
+      # 任一步驟失敗 → 整個 job 失敗、不 commit、不部署（網站維持上一次成功的版本，不會拿舊值冒充新資料）
+      - name: Fetch new OCC 0DTE days
+        run: python scripts/occ_0dte.py 4
+      - name: Fetch all indicators from online sources
+        run: python scripts/build_data.py
       - name: Commit refreshed data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/
-          git diff --cached --quiet || git commit -m "data: daily refresh" && git push
+          git diff --cached --quiet || { git commit -m "data: daily refresh" && git push; }
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

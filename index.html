@@ -59,8 +59,22 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px}
 .toolbar button{font:inherit;font-size:13px;border:1px solid var(--border);background:var(--surface);color:var(--text);padding:4px 12px;border-radius:999px;cursor:pointer}
 .toolbar button[aria-pressed="true"]{background:var(--text);color:var(--surface);border-color:var(--text)}
-.readout{position:sticky;top:0;z-index:5;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:13px;display:flex;flex-wrap:wrap;gap:4px 16px;font-variant-numeric:tabular-nums;margin-bottom:8px}
+.readout{position:sticky;top:0;z-index:5;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:2px 10px;font-variant-numeric:tabular-nums;margin-bottom:8px}
+.readout span{display:flex;justify-content:space-between;gap:6px;white-space:nowrap;min-width:0}
+.readout i{font-style:normal;color:var(--muted)}
 .readout b{font-weight:600}
+.hint{font-size:12px;color:var(--muted);margin:-4px 0 6px}
+.chartblock{position:relative}
+html{scroll-behavior:smooth} h2[id]{scroll-margin-top:12px}
+.hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:18px}
+.hero .stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.hero .k{font-size:12px;color:var(--text2)}
+.hero .v{font-size:26px;font-weight:700;line-height:1.25;font-variant-numeric:tabular-nums}
+.hero .d{font-size:12px;color:var(--muted)}
+.hero .v.hot{color:var(--critical)}
+.toc{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.toc a{font-size:13px;text-decoration:none;color:var(--text2);border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:3px 11px}
+.toc a:hover{color:var(--text);border-color:var(--text2)}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px 4px;margin-bottom:8px}
 .panel header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
 .panel h3{font-size:14px}
@@ -87,7 +101,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 #matrix td.cell small{display:block;color:var(--muted);font-size:10px;white-space:nowrap}
 #matrix tr.cur td{outline:2px solid var(--accent);outline-offset:-2px}
 footer{margin-top:48px;color:var(--muted);font-size:13px}
-@media (max-width:600px){h1{font-size:23px}.cv{height:140px}.cv.tall{height:210px}}
+@media (max-width:600px){.readout{grid-template-columns:repeat(3,1fr);font-size:11px;gap:1px 8px;padding:5px 8px}.hero .v{font-size:22px}h1{font-size:23px}.cv{height:140px}.cv.tall{height:210px}}
 </style>
 </head>
 <body>
@@ -99,9 +113,11 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
 <h1>龐氏漏斗模型：NDX 泡沫頂部推算重建</h1>
 <p class="sub">把影片中的方法拆成公式與可回測的指標，用公開資料畫出每個指標的歷史走勢並與那斯達克 100（NDX）對照。</p>
 
-<div id="verdict" class="note" style="margin-top:18px"></div>
+<div class="hero" id="hero"></div>
+<nav class="toc" aria-label="章節"><a href="#s1">模型核心</a><a href="#s2">指標 × NDX</a><a href="#s3">大跌機率</a><a href="#s4">頂部推算</a><a href="#s5">影片情境</a><a href="#s6">重建落差</a><a href="transcript.html">逐字稿</a></nav>
+<div id="verdict" class="note" style="margin-top:14px"></div>
 
-<h2>1. 模型核心</h2>
+<h2 id="s1">1. 模型核心</h2>
 <div class="formula">上行空間 = 剩餘漏斗 F × 槓桿乘數 L × 速度乘數 V<br>頂部 ≈ 現價 × (1 + F × L × V)</div>
 <div class="grid g3" style="margin-top:12px">
   <div class="card"><h3>F　剩餘漏斗</h3><p class="sub">未來三個月還能流入股市的錢 ÷ 總市值。影片估 1999/12 約 12%，2026/5 約 18–22%（中位 20%）。</p><p class="muted">九池加總方式未公開，無線上資料可重算</p></div>
@@ -126,17 +142,20 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
 <p class="muted">九池的權重與加總方式影片沒有公開，F 值無法用公開資料客觀重現，以下計算機讓你自己代入。</p>
 </details>
 
-<h2>2. 二階導儀表盤：歷史數據 × NDX</h2>
-<p class="sub">7 個指標全部都有歷史資料：本益比、集中度、內部人賣/買比用替代指標；0DTE 佔比是自寫程式從 OCC 日報彙總的真實數據，但 OCC 只開放近 2 年（2024/11 起），之後每天自動累積。所有面板共用同一個時間軸：<b>拖拉最上方的時間框</b>（拉兩端縮放、拖中間平移），或<b>直接在圖上框選一段時間放大</b>；桌面版也可 Ctrl＋滾輪縮放。十字線在各面板同步。紅色虛線為觸發門檻，紅色底色為觸發期間。</p>
+<h2 id="s2">2. 二階導儀表盤：歷史數據 × NDX</h2>
+<p class="sub">7 個指標全部都有歷史資料：本益比、集中度、內部人賣/買比用替代指標；0DTE 佔比是自寫程式從 OCC 日報彙總的真實數據，但 OCC 只開放近 2 年（2024/11 起），之後每天自動累積。所有面板共用同一個時間軸：<b>拖拉最上方的時間框</b>（拉兩端縮放、拖中間平移），或<b>直接在圖上框選一段時間放大</b>；桌面版也可 Ctrl＋滾輪縮放。十字線在各面板同步。紅色虛線為各指標的觸發門檻；<b>紅色底色</b>為 7 項中有 ≥ 4 項同時觸發的月份。</p>
 <div class="toolbar" id="ranges" role="group" aria-label="時間範圍"></div>
-<div class="readout" id="readout" aria-live="polite">拖拉上方時間框或在圖上框選來縮放</div>
+<div class="chartblock">
+<div class="readout" id="readout" aria-live="polite"></div>
+<p class="hint" id="hint"></p>
 <div id="chart" class="panel" style="padding:6px 4px"></div>
+</div>
 <p class="muted">本次更新實際使用的線上來源（<span id="updated2">—</span>）：<span id="srcList">—</span>。GitHub Actions 每個交易日自動重抓；任何來源全部失敗時該次更新會中止，不會沿用舊值。</p>
 
 <h3 style="margin-top:22px">7 指標現況</h3>
 <div class="tablewrap card" style="padding:4px 6px"><table id="dash"></table></div>
 
-<h2>3. 大跌機率（歷史回測）</h2>
+<h2 id="s3">3. 大跌機率（歷史回測）</h2>
 <p class="sub">「大跌」定義為：從某月收盤起，未來 N 個月內 NDX 的月最低價曾比該收盤低 X% 以上。機率 = 歷史上處於相同觸發狀態的月份中，之後真的發生大跌的比例（1997 年起）。</p>
 <div class="toolbar" role="group" aria-label="跌幅門檻"><span class="muted" style="margin-right:4px">跌幅門檻</span><span id="ddX"></span></div>
 <div class="toolbar" role="group" aria-label="條件"><span class="muted" style="margin-right:4px">比較條件</span><span id="ddMode"></span></div>
@@ -147,7 +166,7 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
 </div>
 <div class="note" style="margin-top:12px"><b>怎麼看這些數字。</b>相鄰月份高度重疊，真正獨立的樣本很少（例如觸發數 ≥ 4 的月份幾乎都集中在 1999–2000 年與 2026 年），所以括號中的 90% 信賴區間很寬。這是描述歷史頻率，不是模型預測；而且 0DTE 自 2024/11 起、集中度自 2003 年起才有資料，早期的觸發數可能被低估。</div>
 
-<h2>4. 頂部三角推算</h2>
+<h2 id="s4">4. 頂部三角推算</h2>
 <p class="sub">除了基準價自動帶入最新 NDX 收盤，其餘預設值（EPS、P/E、F/L/V、公允值、超調比）都是<b>影片作者的假設</b>，沒有公開的線上資料可以取代，請自行調整。</p>
 <div class="grid g3 calc">
   <div class="card"><h3>① 本益比擴張</h3>
@@ -174,7 +193,7 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
   <svg class="strip" id="strip" width="100%" role="img" aria-label="三種方法推算的頂部區間"></svg>
 </div>
 
-<h2>5. 影片的情境機率</h2>
+<h2 id="s5">5. 影片的情境機率</h2>
 <div class="grid g3">
   <div class="card"><h3>價位情境</h3><div class="tablewrap"><table>
     <tr><th>情境</th><th>NDX</th><th>機率</th></tr>
@@ -192,7 +211,7 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
   </table></div></div>
 </div>
 
-<h2>6. 重建時發現的落差</h2>
+<h2 id="s6">6. 重建時發現的落差</h2>
 <div class="grid" style="gap:10px">
   <div class="note bad"><b>「2000 年保證金/現金比 4.5–5 倍」對不上。</b>用 FINRA 公開資料（借方餘額 ÷ 現金帳戶自由信用餘額）計算，2000 年 3 月只有 <span id="r2000">—</span> 倍；比值首次達到 6.28 倍是在 <span id="r628">—</span>，而不是影片說的 2025 年 5 月（當時為 <span id="r2505">—</span> 倍）。另外 FINRA 在 2010 年 2 月改了統計口徑（圖上可見明顯跳升），前後不能直接比較，因此影片「超過 2000 年峰值 30%」的說法無法用公開資料驗證；能確定的只有 2010 年後的口徑下，比值已創新高。</div>
   <div class="note"><b>1999 年「預測」是回溯驗證。</b>F ≈ 12% 與「11–14 週」窗口是事後用當時資料重算，九池權重未公開，無法排除過度擬合。</div>
@@ -244,6 +263,7 @@ function init(data){
   buildPanels();
   buildDash();
   buildProb();
+  buildHero();
   buildVerdict();
   calc();
   document.querySelectorAll('.calc input').forEach(el=>el.addEventListener('input',calc));
@@ -256,7 +276,7 @@ function init(data){
 
 const PANELS = [
   {key:'ndx', title:'NDX 那斯達克 100（對數座標）', unit:'', d:0, tall:true, log:true, color:'--ndx'},
-  {key:'triggers', title:'可回測指標觸發數（0–7）', unit:' 項', d:0, color:'--critical', stepped:true, rule:'≥ 3 項視為高風險（集中度 2003 年起、0DTE 2024/11 起才有資料）', threshold:3, dir:'>='},
+  {key:'triggers', title:'可回測指標觸發數（0–7）', unit:' 項', d:0, color:'--critical', stepped:true, rule:'≥ 4 項視為高風險並在各面板塗紅（集中度 2003 年起、0DTE 2024/11 起才有資料）', threshold:4, dir:'>='},
   {key:'margin_debt', title:'保證金借款（十億美元）', unit:'', d:0, color:'--s1', rule:'FINRA 借方餘額'},
   {key:'margin_mom', title:'保證金月增率（一階導）與其變化（二階導）', unit:'%', d:1, color:'--s1', extra:{key:'margin_accel',label:'二階導（百分點）',color:'--s2'}, threshold:0, dir:'<', ruleKey:'margin_mom'},
   {key:'margin_cash', title:'保證金借款 ÷ 現金（倍）', unit:'×', d:2, color:'--s1', rule:'借方餘額 ÷ 現金帳戶自由信用餘額；2010/2 FINRA 口徑變更造成斷層；虛線 4.5× 為影片宣稱的 2000 年峰值', threshold:4.5, dir:'>'},
@@ -270,13 +290,6 @@ const PANELS = [
 
 function seriesOf(key){ return key==='triggers' ? triggers : D.series[key]; }
 
-function triggeredMask(p){
-  if (p.key==='ndx') return triggers.map(t=>t!=null&&t>=3);
-  if (p.ruleKey) return D.dates.map((_,i)=>RULES[p.ruleKey].fn(D.series,i)===true);
-  if (p.threshold==null) return null;
-  const v = seriesOf(p.key);
-  return v.map(x=> x==null?false : p.dir==='>'?x>p.threshold : p.dir==='>='?x>=p.threshold : x<p.threshold);
-}
 function maskAreas(mask){
   const out=[]; if(!mask) return out; let st=null;
   mask.forEach((on,i)=>{ if(on&&st==null) st=i; if((!on||i===mask.length-1)&&st!=null){ const en=on?i:i-1; out.push([{xAxis:D.dates[st]},{xAxis:D.dates[en]}]); st=null; } });
@@ -321,7 +334,7 @@ function buildPanels(){
       step:p.stepped?'end':false, lineStyle:{width:p.key==='ndx'?2:1.6, color:css(p.color)}, itemStyle:{color:css(p.color)},
       emphasis:{disabled:true}, sampling:'lttb',
       markLine:{silent:true, symbol:'none', lineStyle:{color:muted, type:[3,3], width:1}, data:markLineData},
-      markArea:{silent:true, itemStyle:{color:css('--critical-bg')}, data:maskAreas(triggeredMask(p))}});
+      markArea:{silent:true, itemStyle:{color:css('--critical-bg')}, data:maskAreas(triggers.map(t=>t!=null&&t>=4))}});
     if (p.extra) series.push({name:p.extra.label, type:'line', xAxisIndex:i, yAxisIndex:i, data:D.series[p.extra.key], showSymbol:false,
       lineStyle:{width:1.2, color:css(p.extra.color)}, itemStyle:{color:css(p.extra.color)}, emphasis:{disabled:true}});
     top += h + GAP;
@@ -352,6 +365,8 @@ function buildPanels(){
     tb.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.sv===String(opt.startValue)&&b.dataset.ev===String(opt.endValue))); });
   el.addEventListener('mouseleave',()=>setHover(null));
   RANGES.forEach(([_,a,b],k)=>{ const bt=tb.children[k]; bt.dataset.sv=D.dates.indexOf(a); bt.dataset.ev=b?D.dates.indexOf(b):D.dates.length-1; });
+  initReadout();
+  document.getElementById('hint').textContent = isTouch ? '點圖表查看該月數值；拖拉上方時間框兩端可縮放' : '滑鼠移到圖上查看該月數值；拖拉上方時間框或在圖上框選來縮放，Ctrl＋滾輪縮放、Shift＋拖拉平移';
   setRange('1997-01',null);
 }
 
@@ -361,14 +376,29 @@ function setRange(a,b){
 }
 
 let hoverIdx=null;
-function setHover(i){
-  if (i===hoverIdx) return; hoverIdx=i;
-  const r = document.getElementById('readout');
-  if (i==null){ r.textContent = isTouch ? '點圖表查看數值；拖拉上方時間框的兩端可縮放' : '拖拉上方時間框或在圖上框選來縮放；Ctrl＋滾輪縮放、Shift＋拖拉平移'; return; }
-  const s=D.series;
-  r.innerHTML = `<b>${D.dates[i]}</b><span>NDX <b>${fmt(s.ndx[i],0)}</b></span><span>觸發 <b>${triggers[i]??'—'}</b>/7</span>`+
-    `<span>保證金 <b>${fmt(s.margin_debt[i],0)}</b>B</span><span>月增 <b>${fmt(s.margin_mom[i])}</b>%</span><span>二階導 <b>${fmt(s.margin_accel[i])}</b></span>`+
-    `<span>保證金/現金 <b>${fmt(s.margin_cash[i],2)}</b>×</span><span>巴菲特 <b>${fmt(s.buffett[i])}</b>%</span><span>M2−NDX <b>${fmt(s.m2_ndx_gap[i])}</b></span><span>0DTE <b>${fmt(s.zero_dte[i])}</b>%</span><span>淨發行 <b>${fmt(s.issuance[i],0)}</b>B</span><span>RSP/SPY <b>${fmt(s.rsp_spy[i])}</b></span><span>CAPE <b>${fmt(s.cape[i])}</b></span>`;
+// 讀數列：固定 13 格，沒有 hover 時顯示最新月份 → 內容結構與高度永遠不變，圖表不會被推動
+const READ_FIELDS = [
+  ['月份', i=>D.dates[i]], ['NDX', i=>fmt(D.series.ndx[i],0)], ['觸發', i=>(triggers[i]??'—')+'/7'],
+  ['保證金', i=>fmt(D.series.margin_debt[i],0)+'B'], ['月增', i=>fmt(D.series.margin_mom[i])+'%'], ['二階導', i=>fmt(D.series.margin_accel[i])],
+  ['保證金/現金', i=>fmt(D.series.margin_cash[i],2)+'×'], ['巴菲特', i=>fmt(D.series.buffett[i])+'%'], ['M2−NDX', i=>fmt(D.series.m2_ndx_gap[i])],
+  ['0DTE', i=>fmt(D.series.zero_dte[i])+'%'], ['淨發行', i=>fmt(D.series.issuance[i],0)+'B'], ['RSP/SPY', i=>fmt(D.series.rsp_spy[i])], ['CAPE', i=>fmt(D.series.cape[i])],
+];
+function initReadout(){
+  document.getElementById('readout').innerHTML = READ_FIELDS.map(([k])=>`<span><i>${k}</i><b>—</b></span>`).join('');
+  setHover(null, true);
+}
+// 每個欄位對應的資料序列（用來在沒有 hover 時找各自的最新一筆）
+const READ_KEYS = [null,'ndx','__trig','margin_debt','margin_mom','margin_accel','margin_cash','buffett','m2_ndx_gap','zero_dte','issuance','rsp_spy','cape'];
+function lastIdx(key){ const v = key==='__trig' ? triggers : D.series[key]; for(let i=v.length-1;i>=0;i--) if(v[i]!=null) return i; return D.dates.length-1; }
+function setHover(i, force){
+  if (i===hoverIdx && !force) return; hoverIdx=i;
+  const cells = document.querySelectorAll('#readout b');
+  READ_FIELDS.forEach(([_,f],k)=>{
+    if (k===0){ cells[0].textContent = i==null ? '各指標最新' : D.dates[i]; return; }
+    const idx = i ?? lastIdx(READ_KEYS[k]);
+    cells[k].textContent = f(idx).replace('—%','—').replace('—B','—').replace('—×','—');
+    cells[k].title = i==null ? D.dates[idx] : '';
+  });
 }
 
 // ───────── 大跌機率（歷史條件頻率）─────────
@@ -447,7 +477,7 @@ function buildProb(){
     tooltip:{trigger:'axis', axisPointer:{type:'shadow'}, valueFormatter:v=>v+'%'},
     xAxis:{type:'category', data:labels, axisLabel:{color:css('--muted'), rotate:45, fontSize:10}, axisTick:{show:false}, axisLine:{lineStyle:{color:css('--border')}}},
     yAxis:{type:'value', axisLabel:{color:css('--muted'), formatter:'{value}%'}, splitLine:{lineStyle:{color:css('--grid')}}},
-    series:[{type:'bar', barMaxWidth:22, data:vals.map((v,i)=>({value:v, itemStyle:{color: i===H ? css('--muted') : (i>=bi&&i<bi+W&&hitN ? css('--critical') : css('--s1')), borderRadius:[4,4,0,0]}}))}]});
+    series:[{type:'bar', barMaxWidth:22, emphasis:{disabled:true}, cursor:'default', data:vals.map((v,i)=>({value:v, itemStyle:{color: i===H ? css('--muted') : (i>=bi&&i<bi+W&&hitN ? css('--critical') : css('--s1')), borderRadius:[4,4,0,0]}}))}]});
 
   // 機率矩陣
   const rows = BUCKETS.map(([lab,f])=>[lab,f]).concat([['全部（基準）',all]]);
@@ -475,6 +505,18 @@ function fillLive(data){
   set('issPos', runs.map(r=>r.length>1?`${r[0]}–${r.at(-1)}`:r[0]).join('、')||'無');
   set('updated2', data.updated);
   set('srcList', Object.entries(data.sources||{}).map(([k,v])=>`${k} ← ${v}`).join('；'));
+}
+
+function buildHero(){
+  const s=D.series, cs=curState();
+  const r12 = sample(predFor('ge',cs.k), 12, 20), b12 = sample(()=>true, 12, 20);
+  const pv=D.post_video, dd = pv ? (pv.last_close/pv.peak_high-1)*100 : null;
+  const stat=(k,v,d,hot)=>`<div class="stat"><div class="k">${k}</div><div class="v ${hot?'hot':''}">${v}</div><div class="d">${d}</div></div>`;
+  document.getElementById('hero').innerHTML =
+    stat('二階導觸發數', `${cs.k} / 7`, `${cs.date}；≥ 4 為高風險`, cs.k>=4) +
+    stat('12 個月內跌 > 20% 機率', pct(r12.p), `歷史上觸發 ≥ ${cs.k} 時；基準 ${pct(b12.p)}`, r12.p!=null && b12.p && r12.p>=b12.p*1.5) +
+    stat('NDX 距影片後高點', dd==null?'—':`${fmt(dd)}%`, pv?`${pv.peak_date} 高 ${fmt(pv.peak_high,0)} → ${fmt(pv.last_close,0)}`:'', dd!=null&&dd<=-10) +
+    stat('資料更新', D.updated.slice(0,10), '每個交易日自動重抓', false);
 }
 
 function lastOf(key){ const v=D.series[key]; for(let i=v.length-1;i>=0;i--) if(v[i]!=null) return [D.dates[i],v[i],i]; return [null,null,-1]; }

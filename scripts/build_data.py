@@ -46,26 +46,33 @@ def to_month(s: pd.Series) -> pd.Series:
     return s[~s.index.duplicated(keep="last")]
 
 
-def ndx_monthly() -> pd.Series:
-    """依序嘗試：Yahoo chart API → yfinance → Stooq。任一成功即回傳月收盤。"""
+def ndx_monthly() -> pd.DataFrame:
+    """依序嘗試：Yahoo chart API → yfinance → Stooq。回傳月收盤 close 與月最低 low。"""
     try:
         j = json.loads(get("https://query2.finance.yahoo.com/v8/finance/chart/%5ENDX"
                            "?period1=473385600&period2=9999999999&interval=1mo"))["chart"]["result"][0]
-        s = pd.Series(j["indicators"]["quote"][0]["close"],
-                      index=pd.to_datetime(j["timestamp"], unit="s")).dropna()
-        if len(s) > 100:
-            return to_month(s)
+        q = j["indicators"]["quote"][0]
+        df = pd.DataFrame({"close": q["close"], "low": q["low"]},
+                          index=pd.to_datetime(j["timestamp"], unit="s")).dropna()
+        if len(df) > 100:
+            return monthly_df(df)
     except Exception as e:
         print("Yahoo chart API failed:", e)
     try:
         d = yf.download("^NDX", start="1985-01-01", interval="1mo", progress=False, auto_adjust=False)
-        s = d["Close"].squeeze().dropna()
-        if len(s) > 100:
-            return to_month(s)
+        df = pd.DataFrame({"close": d["Close"].squeeze(), "low": d["Low"].squeeze()}).dropna()
+        if len(df) > 100:
+            return monthly_df(df)
     except Exception as e:
         print("yfinance failed:", e)
-    df = pd.read_csv(io.BytesIO(get("https://stooq.com/q/d/l/?s=%5Endx&i=m")), index_col=0, parse_dates=True)
-    return to_month(df["Close"].dropna())
+    d = pd.read_csv(io.BytesIO(get("https://stooq.com/q/d/l/?s=%5Endx&i=m")), index_col=0, parse_dates=True)
+    return monthly_df(d.rename(columns={"Close": "close", "Low": "low"})[["close", "low"]].dropna())
+
+
+def monthly_df(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.index = pd.to_datetime(df.index).to_period("M")
+    return df[~df.index.duplicated(keep="last")]
 
 
 def finra_margin() -> pd.DataFrame:
@@ -136,7 +143,8 @@ def post_video_check() -> dict | None:
 
 
 def main() -> None:
-    ndx = ndx_monthly()
+    ndx_df = ndx_monthly()
+    ndx = ndx_df["close"]
     m = finra_margin()
     debit = m["debit"] / 1000  # 十億美元
     margin_mom = debit.pct_change() * 100
@@ -171,6 +179,7 @@ def main() -> None:
     idx = pd.period_range("1990-01", ndx.index.max(), freq="M")
     frame = pd.DataFrame({
         "ndx": ndx,
+        "ndx_low": ndx_df["low"],
         "margin_debt": debit,
         "margin_mom": margin_mom,
         "margin_accel": margin_accel,

@@ -77,6 +77,15 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .note{border-left:3px solid var(--warn);padding:10px 14px;background:var(--chip);border-radius:0 10px 10px 0}
 .note.bad{border-color:var(--critical)}
 .pools td:first-child{white-space:nowrap}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:10px}
+.tile{border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.tile .h{font-size:12px;color:var(--text2)}
+.tile .p{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2}
+.tile .ci{font-size:12px;color:var(--muted)}
+.tile .lift{font-size:12px;color:var(--text2)}
+#matrix td.cell{text-align:center;font-variant-numeric:tabular-nums}
+#matrix td.cell small{display:block;color:var(--muted);font-size:10px;white-space:nowrap}
+#matrix tr.cur td{outline:2px solid var(--accent);outline-offset:-2px}
 footer{margin-top:48px;color:var(--muted);font-size:13px}
 @media (max-width:600px){h1{font-size:23px}.cv{height:140px}.cv.tall{height:210px}}
 </style>
@@ -127,7 +136,18 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
 <h3 style="margin-top:22px">7 指標現況</h3>
 <div class="tablewrap card" style="padding:4px 6px"><table id="dash"></table></div>
 
-<h2>3. 頂部三角推算</h2>
+<h2>3. 大跌機率（歷史回測）</h2>
+<p class="sub">「大跌」定義為：從某月收盤起，未來 N 個月內 NDX 的月最低價曾比該收盤低 X% 以上。機率 = 歷史上處於相同觸發狀態的月份中，之後真的發生大跌的比例（1997 年起）。</p>
+<div class="toolbar" role="group" aria-label="跌幅門檻"><span class="muted" style="margin-right:4px">跌幅門檻</span><span id="ddX"></span></div>
+<div class="toolbar" role="group" aria-label="條件"><span class="muted" style="margin-right:4px">比較條件</span><span id="ddMode"></span></div>
+<div class="card" id="nowCard"></div>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));margin-top:12px">
+  <div class="card"><h3>收斂窗口：第一次大跌落在哪個月</h3><p class="muted" id="winNote"></p><div id="winChart" style="height:230px"></div><p class="sub" id="winText"></p></div>
+  <div class="card"><h3>機率矩陣：觸發數 × 時間區間</h3><div class="tablewrap"><table id="matrix"></table></div><p class="muted" id="matNote"></p></div>
+</div>
+<div class="note" style="margin-top:12px"><b>怎麼看這些數字。</b>相鄰月份高度重疊，真正獨立的樣本很少（例如觸發數 ≥ 4 的月份幾乎都集中在 1999–2000 年與 2026 年），所以括號中的 90% 信賴區間很寬。這是描述歷史頻率，不是模型預測；而且 0DTE 自 2024/11 起、集中度自 2003 年起才有資料，早期的觸發數可能被低估。</div>
+
+<h2>4. 頂部三角推算</h2>
 <div class="grid g3 calc">
   <div class="card"><h3>① 本益比擴張</h3>
     <label>NDX 2026 EPS<input id="eps" type="number" value="1000"></label>
@@ -153,7 +173,7 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
   <svg class="strip" id="strip" width="100%" role="img" aria-label="三種方法推算的頂部區間"></svg>
 </div>
 
-<h2>4. 影片的情境機率</h2>
+<h2>5. 影片的情境機率</h2>
 <div class="grid g3">
   <div class="card"><h3>價位情境</h3><div class="tablewrap"><table>
     <tr><th>情境</th><th>NDX</th><th>機率</th></tr>
@@ -171,7 +191,7 @@ footer{margin-top:48px;color:var(--muted);font-size:13px}
   </table></div></div>
 </div>
 
-<h2>5. 重建時發現的落差</h2>
+<h2>6. 重建時發現的落差</h2>
 <div class="grid" style="gap:10px">
   <div class="note bad"><b>「2000 年保證金/現金比 4.5–5 倍」對不上。</b>用 FINRA 公開資料（借方餘額 ÷ 現金帳戶自由信用餘額）計算，2000 年 3 月只有 <span id="r2000">—</span> 倍；6.28 倍出現在 2026 年 1 月，而不是影片說的 2025 年 5 月（當時為 4.9 倍）。另外 FINRA 在 2010 年 2 月改了統計口徑（圖上可見明顯跳升），前後不能直接比較，因此影片「超過 2000 年峰值 30%」的說法無法用公開資料驗證；能確定的只有 2010 年後的口徑下，比值已創新高。</div>
   <div class="note"><b>1999 年「預測」是回溯驗證。</b>F ≈ 12% 與「11–14 週」窗口是事後用當時資料重算，九池權重未公開，無法排除過度擬合。</div>
@@ -221,13 +241,14 @@ function init(data){
   document.getElementById('r2000').textContent = fmt(s.margin_cash[i2000],2);
   buildPanels();
   buildDash();
+  buildProb();
   buildVerdict();
   calc();
   document.querySelectorAll('.calc input').forEach(el=>el.addEventListener('input',calc));
   const repo = location.hostname.endsWith('github.io')
     ? `https://github.com/${location.hostname.split('.')[0]}/${location.pathname.split('/')[1]}` : '#';
   document.getElementById('repo').href = repo;
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',buildPanels);
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{buildPanels();buildProb();});
   let rt; addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(()=>{ const sv=chart.getOption().dataZoom[0]; buildPanels(); chart.dispatchAction({type:'dataZoom',dataZoomIndex:0,startValue:sv.startValue,endValue:sv.endValue}); },200); });
 }
 
@@ -346,6 +367,94 @@ function setHover(i){
   r.innerHTML = `<b>${D.dates[i]}</b><span>NDX <b>${fmt(s.ndx[i],0)}</b></span><span>觸發 <b>${triggers[i]??'—'}</b>/7</span>`+
     `<span>保證金 <b>${fmt(s.margin_debt[i],0)}</b>B</span><span>月增 <b>${fmt(s.margin_mom[i])}</b>%</span><span>二階導 <b>${fmt(s.margin_accel[i])}</b></span>`+
     `<span>保證金/現金 <b>${fmt(s.margin_cash[i],2)}</b>×</span><span>巴菲特 <b>${fmt(s.buffett[i])}</b>%</span><span>M2−NDX <b>${fmt(s.m2_ndx_gap[i])}</b></span><span>0DTE <b>${fmt(s.zero_dte[i])}</b>%</span><span>淨發行 <b>${fmt(s.issuance[i],0)}</b>B</span><span>RSP/SPY <b>${fmt(s.rsp_spy[i])}</b></span><span>CAPE <b>${fmt(s.cape[i])}</b></span>`;
+}
+
+// ───────── 大跌機率（歷史條件頻率）─────────
+const HORIZONS = [1,3,6,12];
+const BUCKETS = [['0–1',k=>k<=1],['2',k=>k===2],['3',k=>k===3],['≥ 4',k=>k>=4]];
+let probX = 20, probMode = 'ge', winChart;
+
+// 從第 t 月收盤起，第一次跌破 X% 是在第幾個月；資料不足回傳 undefined，H 個月內沒發生回傳 Infinity
+function firstHit(t, X, H){
+  const s=D.series, c=s.ndx[t]; if (c==null) return undefined;
+  for (let h=1; h<=H; h++){
+    if (t+h >= D.dates.length) return undefined;
+    const l = s.ndx_low[t+h] ?? s.ndx[t+h];
+    if (l!=null && l/c-1 <= -X/100) return h;
+  }
+  return Infinity;
+}
+// 90% Wilson 信賴區間
+function wilson(y,n,z=1.645){ if(!n) return [0,0]; const p=y/n, d=1+z*z/n, c=p+z*z/(2*n), m=z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n)); return [(c-m)/d,(c+m)/d]; }
+// 計算符合條件的月份數與「獨立段落數」（連續月份算同一段）
+function sample(pred, h, X){
+  let n=0, y=0, runs=0, prev=-9;
+  for (let t=0; t<D.dates.length; t++){
+    if (D.dates[t] < '1997-03') continue;
+    const k = triggers[t]; if (k==null || !pred(k)) continue;
+    const f = firstHit(t, X, h); if (f===undefined) continue;
+    n++; if (f<=h) y++; if (t!==prev+1) runs++; prev=t;
+  }
+  return {n, y, p: n? y/n : null, ci: wilson(y,n), runs};
+}
+function curState(){
+  for (let t=D.dates.length-1; t>=0; t--) if (triggers[t]!=null) return {t, k:triggers[t], date:D.dates[t]};
+}
+function predFor(mode, k){ return mode==='ge' ? (x=>x>=k) : (x=>x===k); }
+const pct = p => p==null ? '—' : Math.round(p*100)+'%';
+function addMonths(ym, n){ const [y,m]=ym.split('-').map(Number); const d=new Date(Date.UTC(y,m-1+n,1)); return d.getUTCFullYear()+'/'+String(d.getUTCMonth()+1).padStart(2,'0'); }
+
+function buildProb(){
+  const chips=(el,items,cur,on)=>{ el.innerHTML=''; items.forEach(([v,l])=>{ const b=document.createElement('button'); b.textContent=l; b.setAttribute('aria-pressed',v===cur); b.onclick=()=>on(v); el.appendChild(b); }); };
+  const cs = curState();
+  chips(document.getElementById('ddX'), [[10,'−10%'],[15,'−15%'],[20,'−20%'],[30,'−30%']], probX, v=>{probX=v; buildProb();});
+  chips(document.getElementById('ddMode'), [['ge',`觸發數 ≥ ${cs.k}（樣本較多）`],['eq',`觸發數 = ${cs.k}`]], probMode, v=>{probMode=v; buildProb();});
+  const pred = predFor(probMode, cs.k), all = ()=>true, X = probX;
+  const condTxt = probMode==='ge' ? `觸發數 ≥ ${cs.k}` : `觸發數 = ${cs.k}`;
+
+  // 目前狀態的四個時間區間
+  const tiles = HORIZONS.map(h=>{ const r=sample(pred,h,X), b=sample(all,h,X);
+    const lift = r.p!=null && b.p ? (r.p/b.p) : null;
+    return `<div class="tile"><div class="h">${h} 個月內（至 ${addMonths(cs.date,h)}）</div><div class="p">${pct(r.p)}</div>`+
+      `<div class="ci">90% 區間 ${pct(r.ci[0])}–${pct(r.ci[1])}｜${r.n} 個月 / ${r.runs} 段</div>`+
+      `<div class="lift">基準 ${pct(b.p)}${lift?`，為基準的 ${lift.toFixed(1)} 倍`:''}</div></div>`; }).join('');
+  document.getElementById('nowCard').innerHTML =
+    `<h3>目前狀態：${cs.date} 觸發 ${cs.k}/7 → NDX 跌超過 ${X}% 的歷史機率</h3>`+
+    `<p class="muted">條件：過去所有「${condTxt}」的月份；基準 = 不分狀態的全部月份。</p><div class="tiles">${tiles}</div>`;
+
+  // 收斂窗口：第一次大跌落在第幾個月的分布（12 個月內）
+  const H=12, hist=Array(H).fill(0); let n=0, none=0;
+  for (let t=0; t<D.dates.length; t++){
+    if (D.dates[t] < '1997-03') continue; const k=triggers[t]; if (k==null || !pred(k)) continue;
+    const f=firstHit(t,X,H); if (f===undefined) continue; n++; if (f===Infinity) none++; else hist[f-1]++;
+  }
+  const W=3; let best=0, bi=0;
+  for (let i=0;i+W<=H;i++){ const s=hist.slice(i,i+W).reduce((a,b)=>a+b,0); if(s>best){best=s;bi=i;} }
+  const hitN = n-none;
+  document.getElementById('winNote').textContent = `條件：${condTxt}，共 ${n} 個月有完整 12 個月後續資料；其中 ${hitN} 個月在 12 個月內跌超過 ${X}%。`;
+  document.getElementById('winText').innerHTML = hitN
+    ? `機率最集中的 ${W} 個月窗口：<b>${addMonths(cs.date,bi+1)} – ${addMonths(cs.date,bi+W)}</b>（第 ${bi+1}–${bi+W} 個月），`+
+      `佔所有情況的 <b>${pct(best/n)}</b>，佔「12 個月內有發生」情況的 ${pct(best/hitN)}；12 個月內都沒發生的比例為 ${pct(none/n)}。`
+    : `歷史上此條件下 12 個月內沒有出現跌超過 ${X}% 的情況。`;
+  const el=document.getElementById('winChart');
+  if (winChart) winChart.dispose();
+  winChart = echarts.init(el);
+  const labels = hist.map((_,i)=>addMonths(cs.date,i+1).slice(2)).concat(['未發生']);
+  const vals = hist.map(v=>n? +(v/n*100).toFixed(1):0).concat([n? +(none/n*100).toFixed(1):0]);
+  winChart.setOption({animation:false, grid:{left:36,right:8,top:12,bottom:40},
+    tooltip:{trigger:'axis', axisPointer:{type:'shadow'}, valueFormatter:v=>v+'%'},
+    xAxis:{type:'category', data:labels, axisLabel:{color:css('--muted'), rotate:45, fontSize:10}, axisTick:{show:false}, axisLine:{lineStyle:{color:css('--border')}}},
+    yAxis:{type:'value', axisLabel:{color:css('--muted'), formatter:'{value}%'}, splitLine:{lineStyle:{color:css('--grid')}}},
+    series:[{type:'bar', barMaxWidth:22, data:vals.map((v,i)=>({value:v, itemStyle:{color: i===H ? css('--muted') : (i>=bi&&i<bi+W&&hitN ? css('--critical') : css('--s1')), borderRadius:[4,4,0,0]}}))}]});
+
+  // 機率矩陣
+  const rows = BUCKETS.map(([lab,f])=>[lab,f]).concat([['全部（基準）',all]]);
+  const curLab = BUCKETS.find(([_,f])=>f(cs.k))[0];
+  document.getElementById('matrix').innerHTML = `<tr><th>觸發數</th>${HORIZONS.map(h=>`<th style="text-align:center">${h} 個月</th>`).join('')}</tr>`+
+    rows.map(([lab,f])=>`<tr class="${lab===curLab?'cur':''}"><td>${lab}${lab===curLab?' ◀ 目前':''}</td>`+
+      HORIZONS.map(h=>{ const r=sample(f,h,X); const a=r.p==null?0:Math.min(.6,r.p*.75);
+        return `<td class="cell" style="background:rgba(42,120,214,${a})">${pct(r.p)}<small>${r.n}月·${r.runs}段</small></td>`; }).join('')+'</tr>').join('');
+  document.getElementById('matNote').textContent = `格內：未來 N 個月內 NDX 跌超過 ${X}% 的歷史比例；小字為樣本月數 / 獨立段落數。顏色越深機率越高。`;
 }
 
 function lastOf(key){ const v=D.series[key]; for(let i=v.length-1;i>=0;i--) if(v[i]!=null) return [D.dates[i],v[i],i]; return [null,null,-1]; }

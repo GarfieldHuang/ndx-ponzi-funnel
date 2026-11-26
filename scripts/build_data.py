@@ -11,7 +11,7 @@
   - M2 年增率           : DBnomics 聯準會 H.6 → FRED M2SL
   - 集中度替代          : Yahoo RSP / SPY（含息調整）
   - SPX 0DTE 佔比       : OCC 日報彙總（scripts/occ_0dte.py；OCC 只開放近 2 年，之後逐日累積）
-  - Shiller CAPE        : multpl.com（遠期 P/E 的替代）
+  - Shiller CAPE        : multpl.com → Shiller 官方 ie_data.xls（shillerdata.com）（遠期 P/E 的替代）
 """
 from __future__ import annotations
 
@@ -176,6 +176,22 @@ def cape_monthly() -> pd.Series:
     return to_month(pd.Series({pd.to_datetime(d): float(v) for d, v in rows}).sort_index())
 
 
+def cape_shiller() -> pd.Series:
+    """Shiller 教授官網的 ie_data.xls（Data 分頁，P/E10 = CAPE）。下載連結帶版本號，每次先從首頁找。"""
+    page = get("https://shillerdata.com/").decode("utf-8", "ignore")
+    m = re.search(r'href="((?:https?:)?//[^"]+/ie_data\.xls[^"]*)"', page)
+    if not m:
+        raise ValueError("ie_data.xls link not found on shillerdata.com")
+    url = m.group(1) if m.group(1).startswith("http") else "https:" + m.group(1)
+    df = pd.read_excel(io.BytesIO(get(url)), sheet_name="Data", header=None, skiprows=8, engine="xlrd")
+    df = df[[0, 12]].apply(pd.to_numeric, errors="coerce").dropna()
+    years = df[0].astype(int)
+    months = ((df[0] - years) * 100).round().astype(int)  # 2026.1 = 10 月、2026.01 = 1 月
+    idx = pd.PeriodIndex.from_fields(year=years, month=months, freq="M")
+    s = pd.Series(df[12].astype(float).values, index=idx)
+    return s[~s.index.duplicated(keep="last")].sort_index()
+
+
 def post_video_check() -> dict:
     """影片基準日之後 NDX 的實際日線高點，用來對照模型預測。"""
     j = json.loads(get("https://query2.finance.yahoo.com/v8/finance/chart/%5ENDX"
@@ -212,7 +228,7 @@ def main() -> None:
     issuance = macro("issuance") / 1000
     gap = (macro("m2").pct_change(12) * 100 - ndx.pct_change(12) * 100).dropna()
 
-    cape = first_ok("Shiller CAPE", ("multpl.com", cape_monthly))
+    cape = first_ok("Shiller CAPE", ("multpl.com", cape_monthly), ("shillerdata.com ie_data.xls", cape_shiller))
     conc, conc_dd = first_ok("RSP/SPY", ("Yahoo chart API", lambda: concentration_proxy(yahoo_adj_monthly)),
                                         ("yfinance", lambda: concentration_proxy(yfinance_adj_monthly)))
     zero_dte = first_ok("SPX 0DTE", ("OCC daily volume", zero_dte_monthly))
